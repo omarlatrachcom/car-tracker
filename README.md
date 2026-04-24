@@ -26,8 +26,8 @@ A React Native portfolio app for tracking a car's fuel usage, odometer history, 
 ## Prerequisites
 
 - Node.js LTS
-- npm
-- Expo CLI through `npx expo`
+- pnpm 10+
+- Expo CLI through `pnpm exec expo`
 - Android Studio for Android builds, or Xcode for iOS builds
 - A Google OAuth client configured for Google Sign-In
 
@@ -40,7 +40,7 @@ Clone the repository and install dependencies:
 ```sh
 git clone git@github.com:omarlatrachcom/car-tracker.git
 cd car-tracker
-npm install
+pnpm install
 ```
 
 Create a local environment file:
@@ -63,25 +63,25 @@ The `.env.local` file is intentionally ignored by Git. Values prefixed with `EXP
 Start the Expo development server:
 
 ```sh
-npm start
+pnpm start
 ```
 
 Run on Android:
 
 ```sh
-npm run android
+pnpm run android
 ```
 
 Run on iOS:
 
 ```sh
-npm run ios
+pnpm run ios
 ```
 
 Run on web:
 
 ```sh
-npm run web
+pnpm run web
 ```
 
 If you change `.env.local`, restart the Expo server so the updated values are loaded.
@@ -91,19 +91,19 @@ If you change `.env.local`, restart the Expo server so the updated values are lo
 Create a development build:
 
 ```sh
-npx eas build --profile development --platform android
+pnpm run eas:development:android
 ```
 
 Create a preview Android APK:
 
 ```sh
-npx eas build --profile preview --platform android
+pnpm run eas:preview:android
 ```
 
 Create a production build:
 
 ```sh
-npx eas build --profile production --platform all
+pnpm run eas:production
 ```
 
 ## How To Use
@@ -139,7 +139,7 @@ index.ts         Expo root registration
 Run the TypeScript check:
 
 ```sh
-npx tsc --noEmit
+pnpm run typecheck
 ```
 
 ## Notes
