@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import * as Location from "expo-location";
 import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
@@ -22,6 +23,7 @@ type FuelVolumeUnit = "liters" | "us_gallons" | "imperial_gallons";
 type FuelStateMode = "percent" | "volume";
 type EntryType = "reading" | "refuel";
 type ActiveForm = "none" | "reading" | "refuel";
+type LocationLookupTarget = EntryType | null;
 
 type Car = {
   id: string;
@@ -46,6 +48,7 @@ type Entry = {
   amountAdded: number | null;
   pricePerUnit: number | null;
   moneyPaid: number | null;
+  location: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -105,6 +108,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isDriveSyncing, setIsDriveSyncing] = useState(false);
+  const [locationLookupTarget, setLocationLookupTarget] =
+    useState<LocationLookupTarget>(null);
   const [driveUser, setDriveUser] = useState<GoogleDriveUser | null>(null);
 
   const [name, setName] = useState("");
@@ -120,11 +125,13 @@ export default function App() {
 
   const [readingOdometer, setReadingOdometer] = useState("");
   const [readingTankState, setReadingTankState] = useState("");
+  const [readingLocation, setReadingLocation] = useState("");
 
   const [refuelOdometer, setRefuelOdometer] = useState("");
   const [refuelAmountAdded, setRefuelAmountAdded] = useState("");
   const [refuelPricePerUnit, setRefuelPricePerUnit] = useState("");
   const [refuelMoneyPaid, setRefuelMoneyPaid] = useState("");
+  const [refuelLocation, setRefuelLocation] = useState("");
 
   useEffect(() => {
     GoogleSignin.configure({
@@ -706,6 +713,7 @@ export default function App() {
     setActiveForm("reading");
     setReadingOdometer(latestEntry ? String(latestEntry.odometer) : "");
     setReadingTankState(latestEntry ? String(latestEntry.tankState) : "");
+    setReadingLocation("");
   }
 
   function openRefuelForm() {
@@ -722,16 +730,107 @@ export default function App() {
     setRefuelAmountAdded("");
     setRefuelPricePerUnit("");
     setRefuelMoneyPaid("");
+    setRefuelLocation("");
   }
 
   function closeForms() {
     setActiveForm("none");
     setReadingOdometer("");
     setReadingTankState("");
+    setReadingLocation("");
     setRefuelOdometer("");
     setRefuelAmountAdded("");
     setRefuelPricePerUnit("");
     setRefuelMoneyPaid("");
+    setRefuelLocation("");
+  }
+
+  async function handleUseCurrentLocation(target: EntryType) {
+    setLocationLookupTarget(target);
+
+    try {
+      const locationText = await getCurrentLocationText({ showAlerts: true });
+
+      if (!locationText) return;
+
+      if (target === "reading") {
+        setReadingLocation(locationText);
+      } else {
+        setRefuelLocation(locationText);
+      }
+    } finally {
+      setLocationLookupTarget(null);
+    }
+  }
+
+  async function resolveLocationForSave(target: EntryType, value: string) {
+    const trimmedLocation = value.trim();
+    if (trimmedLocation) return trimmedLocation;
+
+    setLocationLookupTarget(target);
+
+    try {
+      return await getCurrentLocationText({ showAlerts: false });
+    } finally {
+      setLocationLookupTarget(null);
+    }
+  }
+
+  async function getCurrentLocationText(options: { showAlerts: boolean }) {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+
+      if (!permission.granted) {
+        if (options.showAlerts) {
+          Alert.alert(
+            "Location permission",
+            "Allow location access to fill the place from this phone.",
+          );
+        }
+        return null;
+      }
+
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        if (options.showAlerts) {
+          Alert.alert(
+            "Location unavailable",
+            "Turn on device location services and try again.",
+          );
+        }
+        return null;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      let address: Location.LocationGeocodedAddress | null = null;
+
+      try {
+        [address] = await Location.reverseGeocodeAsync({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      } catch (error) {
+        console.warn("Reverse geocoding failed:", error);
+      }
+
+      return (
+        formatGeocodedLocation(address) ??
+        `${roundTo4(position.coords.latitude)}, ${roundTo4(
+          position.coords.longitude,
+        )}`
+      );
+    } catch (error) {
+      console.error("Location lookup failed:", error);
+
+      if (options.showAlerts) {
+        Alert.alert("Location error", getErrorMessage(error));
+      }
+
+      return null;
+    }
   }
 
   async function handleSaveReading() {
@@ -762,6 +861,7 @@ export default function App() {
     const distanceSinceLastEntry = latestEntry
       ? roundTo2(odometer - latestEntry.odometer)
       : null;
+    const location = await resolveLocationForSave("reading", readingLocation);
 
     const now = new Date().toISOString();
 
@@ -775,6 +875,7 @@ export default function App() {
       amountAdded: null,
       pricePerUnit: null,
       moneyPaid: null,
+      location,
       createdAt: now,
       updatedAt: now,
     };
@@ -844,6 +945,7 @@ export default function App() {
     );
 
     const distanceSinceLastEntry = roundTo2(odometer - latestEntry.odometer);
+    const location = await resolveLocationForSave("refuel", refuelLocation);
 
     const now = new Date().toISOString();
 
@@ -857,6 +959,7 @@ export default function App() {
       amountAdded: amount,
       pricePerUnit: refuelResolution.pricePerUnit,
       moneyPaid: refuelResolution.moneyPaid,
+      location,
       createdAt: now,
       updatedAt: now,
     };
@@ -1213,6 +1316,11 @@ export default function App() {
               <Text style={styles.cardLine}>
                 Last entry type: {formatEntryType(latestEntry.type)}
               </Text>
+              {latestEntry.location ? (
+                <Text style={styles.cardLine}>
+                  Location: {latestEntry.location}
+                </Text>
+              ) : null}
             </>
           ) : (
             <Text style={styles.cardLine}>
@@ -1319,6 +1427,14 @@ export default function App() {
               />
             </View>
 
+            <LocationInput
+              value={readingLocation}
+              onChangeText={setReadingLocation}
+              onUseCurrentLocation={() => handleUseCurrentLocation("reading")}
+              isResolving={locationLookupTarget === "reading"}
+              disabled={isSaving || isDriveSyncing || !!locationLookupTarget}
+            />
+
             <View style={styles.calculationBox}>
               <Text style={styles.calculationTitle}>Distance crossed</Text>
               <Text style={styles.calculationValue}>
@@ -1334,20 +1450,25 @@ export default function App() {
                 style={[
                   styles.primaryButton,
                   styles.flexButton,
-                  (isSaving || isDriveSyncing) && styles.buttonDisabled,
+                  (isSaving || isDriveSyncing || !!locationLookupTarget) &&
+                    styles.buttonDisabled,
                 ]}
                 onPress={handleSaveReading}
-                disabled={isSaving || isDriveSyncing}
+                disabled={isSaving || isDriveSyncing || !!locationLookupTarget}
               >
                 <Text style={styles.primaryButtonText}>
-                  {isSaving || isDriveSyncing ? "Saving..." : "Save Reading"}
+                  {locationLookupTarget === "reading"
+                    ? "Locating..."
+                    : isSaving || isDriveSyncing
+                      ? "Saving..."
+                      : "Save Reading"}
                 </Text>
               </Pressable>
 
               <Pressable
                 style={[styles.secondaryButton, styles.flexButton]}
                 onPress={closeForms}
-                disabled={isSaving || isDriveSyncing}
+                disabled={isSaving || isDriveSyncing || !!locationLookupTarget}
               >
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
@@ -1375,6 +1496,14 @@ export default function App() {
                 onChangeText={setRefuelOdometer}
               />
             </View>
+
+            <LocationInput
+              value={refuelLocation}
+              onChangeText={setRefuelLocation}
+              onUseCurrentLocation={() => handleUseCurrentLocation("refuel")}
+              isResolving={locationLookupTarget === "refuel"}
+              disabled={isSaving || isDriveSyncing || !!locationLookupTarget}
+            />
 
             <View style={styles.formGroup}>
               <Text style={styles.label}>Current tank state</Text>
@@ -1484,20 +1613,25 @@ export default function App() {
                 style={[
                   styles.primaryButton,
                   styles.flexButton,
-                  (isSaving || isDriveSyncing) && styles.buttonDisabled,
+                  (isSaving || isDriveSyncing || !!locationLookupTarget) &&
+                    styles.buttonDisabled,
                 ]}
                 onPress={handleSaveRefuel}
-                disabled={isSaving || isDriveSyncing}
+                disabled={isSaving || isDriveSyncing || !!locationLookupTarget}
               >
                 <Text style={styles.primaryButtonText}>
-                  {isSaving || isDriveSyncing ? "Saving..." : "Save Refuel"}
+                  {locationLookupTarget === "refuel"
+                    ? "Locating..."
+                    : isSaving || isDriveSyncing
+                      ? "Saving..."
+                      : "Save Refuel"}
                 </Text>
               </Pressable>
 
               <Pressable
                 style={[styles.secondaryButton, styles.flexButton]}
                 onPress={closeForms}
-                disabled={isSaving || isDriveSyncing}
+                disabled={isSaving || isDriveSyncing || !!locationLookupTarget}
               >
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
@@ -1537,6 +1671,11 @@ export default function App() {
                   <Text style={styles.historyLine}>
                     Tank state: {formatTankState(entry.tankState, existingCar)}
                   </Text>
+                  {entry.location ? (
+                    <Text style={styles.historyLine}>
+                      Location: {entry.location}
+                    </Text>
+                  ) : null}
 
                   {entry.type === "refuel" && entry.amountAdded !== null && (
                     <Text style={styles.historyLine}>
@@ -1628,6 +1767,54 @@ function OptionButton({ label, selected, onPress }: OptionButtonProps) {
         {label}
       </Text>
     </Pressable>
+  );
+}
+
+type LocationInputProps = {
+  value: string;
+  onChangeText: (value: string) => void;
+  onUseCurrentLocation: () => void;
+  isResolving: boolean;
+  disabled: boolean;
+};
+
+function LocationInput({
+  value,
+  onChangeText,
+  onUseCurrentLocation,
+  isResolving,
+  disabled,
+}: LocationInputProps) {
+  return (
+    <View style={styles.formGroup}>
+      <Text style={styles.label}>Location</Text>
+      <View style={styles.locationRow}>
+        <TextInput
+          style={[styles.input, styles.locationTextInput]}
+          placeholder="Example: Shell Station, Casablanca"
+          value={value}
+          onChangeText={onChangeText}
+          editable={!disabled}
+          autoCapitalize="words"
+          returnKeyType="done"
+        />
+        <Pressable
+          style={[
+            styles.secondaryButton,
+            styles.locationButton,
+            disabled && styles.buttonDisabled,
+          ]}
+          onPress={onUseCurrentLocation}
+          disabled={disabled}
+        >
+          {isResolving ? (
+            <ActivityIndicator size="small" color="#111" />
+          ) : (
+            <Text style={styles.locationButtonText}>Use GPS</Text>
+          )}
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -1723,6 +1910,10 @@ function normalizeAppData(data: Partial<AppData>): AppData {
             typeof entry.pricePerUnit === "number" ? entry.pricePerUnit : null,
           moneyPaid:
             typeof entry.moneyPaid === "number" ? entry.moneyPaid : null,
+          location:
+            typeof entry.location === "string" && entry.location.trim()
+              ? entry.location.trim()
+              : null,
           createdAt:
             typeof entry.createdAt === "string"
               ? entry.createdAt
@@ -2039,6 +2230,46 @@ function formatConsumptionValue(value: number | null, car: Car) {
   )}/100 ${formatDistanceUnitLabel(car.distanceUnit)}`;
 }
 
+function formatGeocodedLocation(
+  address: Location.LocationGeocodedAddress | null | undefined,
+) {
+  if (!address) return null;
+
+  const formattedAddress =
+    isRecord(address) && typeof address.formattedAddress === "string"
+      ? address.formattedAddress.trim()
+      : "";
+
+  if (formattedAddress) return formattedAddress;
+
+  const locationParts = uniqueNonEmptyStrings([
+    address.name,
+    address.street,
+    address.district,
+    address.city,
+    address.subregion,
+    address.region,
+    address.country,
+  ]);
+
+  return locationParts.length > 0 ? locationParts.join(", ") : null;
+}
+
+function uniqueNonEmptyStrings(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const uniqueValues: string[] = [];
+
+  for (const value of values) {
+    const trimmedValue = value?.trim();
+    if (!trimmedValue || seen.has(trimmedValue)) continue;
+
+    seen.add(trimmedValue);
+    uniqueValues.push(trimmedValue);
+  }
+
+  return uniqueValues;
+}
+
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
 }
@@ -2114,6 +2345,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
+  },
+  locationRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "stretch",
+  },
+  locationTextInput: {
+    flex: 1,
+  },
+  locationButton: {
+    width: 104,
+    justifyContent: "center",
+  },
+  locationButtonText: {
+    color: "#111",
+    fontSize: 15,
+    fontWeight: "700",
   },
   readonlyBox: {
     backgroundColor: "#f3f4f6",

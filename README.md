@@ -7,6 +7,7 @@ A React Native portfolio app for tracking a car's fuel usage, odometer history, 
 - Create a single car profile with fuel type, currency, distance unit, fuel volume unit, tank capacity, and tank state mode.
 - Save odometer readings with the current tank state.
 - Save refuels by entering any two of amount added, price per unit, and money paid.
+- Add a typed or GPS-inferred location to readings and refuels.
 - Automatically calculate missing refuel values and tank state after refuel.
 - Review history for readings, refuels, distance crossed, fuel used, and consumption.
 - View latest and average fuel consumption metrics.
@@ -20,6 +21,7 @@ A React Native portfolio app for tracking a car's fuel usage, odometer history, 
 - React 19
 - TypeScript
 - AsyncStorage
+- Expo Location
 - React Native Google Sign-In
 - EAS Build configuration
 
@@ -111,8 +113,8 @@ pnpm run eas:production
 1. Open the app and create your first car profile.
 2. Choose distance and fuel units, then enter the tank capacity.
 3. Add the first odometer reading and current tank state.
-4. Use `Update Reading` to record later odometer and tank readings.
-5. Use `Refuel` to record fuel purchases. Enter any two refuel values and the app calculates the third.
+4. Use `Update Reading` to record later odometer and tank readings with a location.
+5. Use `Refuel` to record fuel purchases with a location. Enter any two refuel values and the app calculates the third.
 6. Review the history and fuel consumption cards to track usage over time.
 7. Connect Google Drive to sync the local dataset to the app data folder.
 8. Use `Sync Now` to manually merge local and Drive data.

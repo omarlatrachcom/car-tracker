@@ -17,6 +17,10 @@
       "bundleIdentifier": "com.anonymous.cartracker"
     },
     "android": {
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1f6feb"
@@ -29,7 +33,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Car Tracker to use your location to label readings and refuels."
+        }
+      ]
     ],
     "extra": {
       "eas": {
