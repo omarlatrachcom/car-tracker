@@ -1,5 +1,6 @@
 import { Pressable, Text, View } from "react-native";
 
+import { CollapsibleCard } from "./CollapsibleCard";
 import { DRIVE_SYNC_FILE_NAME } from "../constants";
 import { styles } from "../styles";
 import type { GoogleDriveUser, SyncState } from "../types";
@@ -10,6 +11,7 @@ type SyncCardProps = {
   sync: SyncState;
   statusLabel: string;
   showLastSource?: boolean;
+  initiallyCollapsed?: boolean;
   isSaving: boolean;
   isDriveSyncing: boolean;
   onConnect: () => void;
@@ -22,6 +24,7 @@ export function SyncCard({
   sync,
   statusLabel,
   showLastSource = false,
+  initiallyCollapsed = false,
   isSaving,
   isDriveSyncing,
   onConnect,
@@ -29,8 +32,10 @@ export function SyncCard({
   onDisconnect,
 }: SyncCardProps) {
   return (
-    <View style={styles.card}>
-      <Text style={styles.sectionTitle}>Google Drive Sync</Text>
+    <CollapsibleCard
+      title="Google Drive Sync"
+      initiallyCollapsed={initiallyCollapsed}
+    >
       <Text style={styles.cardLine}>Status: {statusLabel}</Text>
       {driveUser && (
         <Text style={styles.cardLine}>Account: {driveUser.email}</Text>
@@ -83,6 +88,6 @@ export function SyncCard({
           </>
         )}
       </View>
-    </View>
+    </CollapsibleCard>
   );
 }

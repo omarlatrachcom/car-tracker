@@ -9,6 +9,7 @@ A React Native portfolio app for tracking a car's fuel usage, odometer history, 
 - Save refuels by entering any two of amount added, price per unit, and money paid.
 - Add a typed or GPS-inferred location to readings and refuels.
 - Automatically calculate missing refuel values and tank state after refuel.
+- Add highway passes, select a pass, then track refills, location-aware travel fees, and balance.
 - Review history for readings, refuels, distance crossed, fuel used, and consumption.
 - View latest and average fuel consumption metrics.
 - Persist data locally with AsyncStorage.

@@ -3,7 +3,11 @@ export type FuelVolumeUnit = "liters" | "us_gallons" | "imperial_gallons";
 export type FuelStateMode = "percent" | "volume";
 export type EntryType = "reading" | "refuel";
 export type ActiveForm = "none" | "reading" | "refuel";
-export type LocationLookupTarget = EntryType | null;
+export type LocationLookupTarget =
+  | EntryType
+  | "car_wash"
+  | "highway_pass_travel_fee"
+  | null;
 
 export type Car = {
   id: string;
@@ -35,6 +39,42 @@ export type Entry = {
   updatedAt: string;
 };
 
+export type CarWash = {
+  id: string;
+  carId: string;
+  price: number;
+  location: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type HighwayPass = {
+  id: string;
+  carId: string;
+  passNumber: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type HighwayPassRefill = {
+  id: string;
+  carId: string;
+  highwayPassId: string;
+  amount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type HighwayPassTravelFee = {
+  id: string;
+  carId: string;
+  highwayPassId: string;
+  amount: number;
+  location: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SyncState = {
   lastDriveSyncAt: string | null;
   lastDriveFileId: string | null;
@@ -48,6 +88,10 @@ export type AppData = {
   updatedAt: string;
   cars: Car[];
   entries: Entry[];
+  carWashes: CarWash[];
+  highwayPasses: HighwayPass[];
+  highwayPassRefills: HighwayPassRefill[];
+  highwayPassTravelFees: HighwayPassTravelFee[];
   sync: SyncState;
 };
 

@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 
+import { CollapsibleCard } from "./src/components/CollapsibleCard";
 import { LocationInput, OptionButton } from "./src/components/FormControls";
 import { SyncCard } from "./src/components/SyncCard";
 import {
@@ -42,12 +43,16 @@ import type {
   ActiveForm,
   AppData,
   Car,
+  CarWash,
   DistanceUnit,
   Entry,
   EntryType,
   FuelStateMode,
   FuelVolumeUnit,
   GoogleDriveUser,
+  HighwayPass,
+  HighwayPassRefill,
+  HighwayPassTravelFee,
   LocationLookupTarget,
   RefuelIntervalMetric,
   RefuelResolution,
@@ -83,6 +88,8 @@ import {
 } from "./src/utils/numbers";
 import { getErrorMessage, isRecord } from "./src/utils/object";
 
+type HighwayPassForm = "none" | "add_pass" | "refill" | "travel_fee";
+
 export default function App() {
   const [appData, setAppData] = useState<AppData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -115,6 +122,19 @@ export default function App() {
   const [refuelPricePerUnit, setRefuelPricePerUnit] = useState("");
   const [refuelMoneyPaid, setRefuelMoneyPaid] = useState("");
   const [refuelLocation, setRefuelLocation] = useState("");
+  const [newHighwayPassNumber, setNewHighwayPassNumber] = useState("");
+  const [selectedHighwayPassId, setSelectedHighwayPassId] = useState<
+    string | null
+  >(null);
+  const [activeHighwayPassForm, setActiveHighwayPassForm] =
+    useState<HighwayPassForm>("none");
+  const [highwayPassRefillAmount, setHighwayPassRefillAmount] = useState("");
+  const [highwayPassTravelFeeAmount, setHighwayPassTravelFeeAmount] =
+    useState("");
+  const [highwayPassTravelFeeLocation, setHighwayPassTravelFeeLocation] =
+    useState("");
+  const [carWashPrice, setCarWashPrice] = useState("");
+  const [carWashLocation, setCarWashLocation] = useState("");
   const [engineOilNextDueOdometerInput, setEngineOilNextDueOdometerInput] =
     useState("");
 
@@ -428,6 +448,133 @@ export default function App() {
   const latestEntry = carEntries[0] ?? null;
   const currentOdometer = latestEntry?.odometer ?? null;
 
+  const carWashes = useMemo(() => {
+    if (!appData || !existingCar) return [] as CarWash[];
+    return appData.carWashes
+      .filter((carWash) => carWash.carId === existingCar.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [appData, existingCar]);
+
+  const latestCarWash = carWashes[0] ?? null;
+  const totalCarWashSpend = useMemo(
+    () => roundTo2(carWashes.reduce((sum, carWash) => sum + carWash.price, 0)),
+    [carWashes],
+  );
+
+  const highwayPasses = useMemo(() => {
+    if (!appData || !existingCar) return [] as HighwayPass[];
+    return appData.highwayPasses
+      .filter((pass) => pass.carId === existingCar.id)
+      .sort((a, b) => a.passNumber.localeCompare(b.passNumber));
+  }, [appData, existingCar]);
+
+  const selectedHighwayPass = useMemo(() => {
+    if (highwayPasses.length === 0) return null;
+    return (
+      highwayPasses.find((pass) => pass.id === selectedHighwayPassId) ??
+      highwayPasses[0]
+    );
+  }, [highwayPasses, selectedHighwayPassId]);
+
+  useEffect(() => {
+    if (highwayPasses.length === 0) {
+      setSelectedHighwayPassId(null);
+      return;
+    }
+
+    if (highwayPasses.some((pass) => pass.id === selectedHighwayPassId)) {
+      return;
+    }
+
+    setSelectedHighwayPassId(highwayPasses[0].id);
+  }, [highwayPasses, selectedHighwayPassId]);
+
+  const highwayPassRefills = useMemo(() => {
+    if (!appData || !existingCar) return [] as HighwayPassRefill[];
+    return appData.highwayPassRefills
+      .filter((refill) => refill.carId === existingCar.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [appData, existingCar]);
+
+  const highwayPassTravelFees = useMemo(() => {
+    if (!appData || !existingCar) return [] as HighwayPassTravelFee[];
+    return appData.highwayPassTravelFees
+      .filter((fee) => fee.carId === existingCar.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [appData, existingCar]);
+
+  function getHighwayPassBalance(passId: string) {
+    const totalRefilled = highwayPassRefills
+      .filter((refill) => refill.highwayPassId === passId)
+      .reduce((sum, refill) => sum + refill.amount, 0);
+    const totalDeducted = highwayPassTravelFees
+      .filter((fee) => fee.highwayPassId === passId)
+      .reduce((sum, fee) => sum + fee.amount, 0);
+
+    return roundTo2(totalRefilled - totalDeducted);
+  }
+
+  const selectedHighwayPassRefills = useMemo(() => {
+    if (!selectedHighwayPass) return [] as HighwayPassRefill[];
+    return highwayPassRefills.filter(
+      (refill) => refill.highwayPassId === selectedHighwayPass.id,
+    );
+  }, [highwayPassRefills, selectedHighwayPass]);
+
+  const latestHighwayPassRefill = selectedHighwayPassRefills[0] ?? null;
+  const totalHighwayPassRefillSpend = useMemo(
+    () =>
+      roundTo2(
+        selectedHighwayPassRefills.reduce(
+          (sum, refill) => sum + refill.amount,
+          0,
+        ),
+      ),
+    [selectedHighwayPassRefills],
+  );
+
+  const selectedHighwayPassTravelFees = useMemo(() => {
+    if (!selectedHighwayPass) return [] as HighwayPassTravelFee[];
+    return highwayPassTravelFees.filter(
+      (fee) => fee.highwayPassId === selectedHighwayPass.id,
+    );
+  }, [highwayPassTravelFees, selectedHighwayPass]);
+
+  const latestHighwayPassTravelFee = selectedHighwayPassTravelFees[0] ?? null;
+  const totalHighwayPassTravelFeeSpend = useMemo(
+    () =>
+      roundTo2(
+        selectedHighwayPassTravelFees.reduce((sum, fee) => sum + fee.amount, 0),
+      ),
+    [selectedHighwayPassTravelFees],
+  );
+
+  const highwayPassBalance = useMemo(
+    () =>
+      roundTo2(totalHighwayPassRefillSpend - totalHighwayPassTravelFeeSpend),
+    [totalHighwayPassRefillSpend, totalHighwayPassTravelFeeSpend],
+  );
+
+  const selectedHighwayPassHistory = useMemo(() => {
+    const refillHistory = selectedHighwayPassRefills.map((refill) => ({
+      id: refill.id,
+      type: "refill" as const,
+      amount: refill.amount,
+      createdAt: refill.createdAt,
+    }));
+    const travelFeeHistory = selectedHighwayPassTravelFees.map((fee) => ({
+      id: fee.id,
+      type: "travel_fee" as const,
+      amount: fee.amount,
+      location: fee.location,
+      createdAt: fee.createdAt,
+    }));
+
+    return [...refillHistory, ...travelFeeHistory].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    );
+  }, [selectedHighwayPassRefills, selectedHighwayPassTravelFees]);
+
   const isEngineOilChangeOverdue = useMemo(() => {
     if (
       !existingCar ||
@@ -586,6 +733,10 @@ export default function App() {
       updatedAt: now,
       cars: [newCar],
       entries: [],
+      carWashes: [],
+      highwayPasses: [],
+      highwayPassRefills: [],
+      highwayPassTravelFees: [],
     });
 
     await saveAppData(nextData);
@@ -597,6 +748,12 @@ export default function App() {
     setFuelVolumeUnit("liters");
     setTankCapacity("");
     setFuelStateMode("percent");
+    setNewHighwayPassNumber("");
+    setSelectedHighwayPassId(null);
+    setActiveHighwayPassForm("none");
+    setHighwayPassRefillAmount("");
+    setHighwayPassTravelFeeAmount("");
+    setHighwayPassTravelFeeLocation("");
   }
 
   function openReadingForm() {
@@ -621,6 +778,7 @@ export default function App() {
     setRefuelPricePerUnit("");
     setRefuelMoneyPaid("");
     setRefuelLocation("");
+    setHighwayPassTravelFeeLocation("");
   }
 
   function closeForms() {
@@ -635,7 +793,30 @@ export default function App() {
     setRefuelLocation("");
   }
 
-  async function handleUseCurrentLocation(target: EntryType) {
+  function openHighwayPassForm(form: Exclude<HighwayPassForm, "none">) {
+    if (form === "add_pass") {
+      setNewHighwayPassNumber("");
+    } else if (form === "refill") {
+      setHighwayPassRefillAmount("");
+    } else {
+      setHighwayPassTravelFeeAmount("");
+      setHighwayPassTravelFeeLocation("");
+    }
+
+    setActiveHighwayPassForm(form);
+  }
+
+  function closeHighwayPassForm() {
+    setActiveHighwayPassForm("none");
+    setNewHighwayPassNumber("");
+    setHighwayPassRefillAmount("");
+    setHighwayPassTravelFeeAmount("");
+    setHighwayPassTravelFeeLocation("");
+  }
+
+  async function handleUseCurrentLocation(
+    target: NonNullable<LocationLookupTarget>,
+  ) {
     setLocationLookupTarget(target);
 
     try {
@@ -645,15 +826,22 @@ export default function App() {
 
       if (target === "reading") {
         setReadingLocation(locationText);
-      } else {
+      } else if (target === "refuel") {
         setRefuelLocation(locationText);
+      } else if (target === "highway_pass_travel_fee") {
+        setHighwayPassTravelFeeLocation(locationText);
+      } else {
+        setCarWashLocation(locationText);
       }
     } finally {
       setLocationLookupTarget(null);
     }
   }
 
-  async function resolveLocationForSave(target: EntryType, value: string) {
+  async function resolveLocationForSave(
+    target: NonNullable<LocationLookupTarget>,
+    value: string,
+  ) {
     const trimmedLocation = value.trim();
     if (trimmedLocation) return trimmedLocation;
 
@@ -900,6 +1088,209 @@ export default function App() {
     await saveAppData(nextData);
   }
 
+  async function handleSaveCarWash() {
+    if (!appData || !existingCar) return;
+
+    const price = parseDecimal(carWashPrice);
+
+    if (!isNonNegativeNumber(price)) {
+      Alert.alert("Validation error", "Please enter a valid car wash price.");
+      return;
+    }
+
+    const location = await resolveLocationForSave(
+      "car_wash",
+      carWashLocation,
+    );
+    const now = new Date().toISOString();
+
+    const newCarWash: CarWash = {
+      id: createId("car_wash"),
+      carId: existingCar.id,
+      price,
+      location,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.map((car) =>
+        car.id === existingCar.id ? { ...car, updatedAt: now } : car,
+      ),
+      carWashes: [newCarWash, ...appData.carWashes],
+    });
+
+    await saveAppData(nextData);
+    setCarWashPrice("");
+    setCarWashLocation("");
+  }
+
+  async function handleAddHighwayPass() {
+    if (!appData || !existingCar) return;
+
+    const passNumber = newHighwayPassNumber.trim();
+
+    if (!passNumber) {
+      Alert.alert("Validation error", "Please enter the pass number.");
+      return;
+    }
+
+    const existingPass = highwayPasses.find(
+      (pass) => pass.passNumber.toLowerCase() === passNumber.toLowerCase(),
+    );
+
+    if (existingPass) {
+      setSelectedHighwayPassId(existingPass.id);
+      setNewHighwayPassNumber("");
+      setActiveHighwayPassForm("none");
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const newPass: HighwayPass = {
+      id: createId("highway_pass"),
+      carId: existingCar.id,
+      passNumber,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.map((car) =>
+        car.id === existingCar.id ? { ...car, updatedAt: now } : car,
+      ),
+      highwayPasses: [newPass, ...appData.highwayPasses],
+    });
+
+    await saveAppData(nextData);
+    setSelectedHighwayPassId(newPass.id);
+    setNewHighwayPassNumber("");
+    setActiveHighwayPassForm("none");
+  }
+
+  async function handleSaveHighwayPassRefill() {
+    if (!appData || !existingCar) return;
+
+    if (!selectedHighwayPass) {
+      Alert.alert(
+        "Validation error",
+        "Add or select a highway pass before saving a refill.",
+      );
+      return;
+    }
+
+    const amount = parseDecimal(highwayPassRefillAmount);
+
+    if (!isPositiveNumber(amount)) {
+      Alert.alert(
+        "Validation error",
+        "Please enter a valid highway pass refill amount.",
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const newRefill: HighwayPassRefill = {
+      id: createId("highway_pass_refill"),
+      carId: existingCar.id,
+      highwayPassId: selectedHighwayPass.id,
+      amount,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.map((car) =>
+        car.id === existingCar.id ? { ...car, updatedAt: now } : car,
+      ),
+      highwayPassRefills: [newRefill, ...appData.highwayPassRefills],
+    });
+
+    await saveAppData(nextData);
+    setHighwayPassRefillAmount("");
+    setActiveHighwayPassForm("none");
+  }
+
+  async function handleSaveHighwayPassTravelFee() {
+    if (!appData || !existingCar) return;
+
+    if (!selectedHighwayPass) {
+      Alert.alert(
+        "Validation error",
+        "Add or select a highway pass before saving a travel fee.",
+      );
+      return;
+    }
+
+    const amount = parseDecimal(highwayPassTravelFeeAmount);
+
+    if (!isPositiveNumber(amount)) {
+      Alert.alert(
+        "Validation error",
+        "Please enter a valid highway pass travel fee.",
+      );
+      return;
+    }
+
+    if (amount > highwayPassBalance) {
+      Alert.alert(
+        "Validation error",
+        "Travel fee cannot be greater than the selected pass balance.",
+      );
+      return;
+    }
+
+    const location = await resolveLocationForSave(
+      "highway_pass_travel_fee",
+      highwayPassTravelFeeLocation,
+    );
+
+    if (!location) {
+      Alert.alert(
+        "Validation error",
+        "Please enter a travel fee location or use GPS.",
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const newTravelFee: HighwayPassTravelFee = {
+      id: createId("highway_pass_travel_fee"),
+      carId: existingCar.id,
+      highwayPassId: selectedHighwayPass.id,
+      amount,
+      location,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.map((car) =>
+        car.id === existingCar.id ? { ...car, updatedAt: now } : car,
+      ),
+      highwayPassTravelFees: [
+        newTravelFee,
+        ...appData.highwayPassTravelFees,
+      ],
+    });
+
+    await saveAppData(nextData);
+    setHighwayPassTravelFeeAmount("");
+    setHighwayPassTravelFeeLocation("");
+    setActiveHighwayPassForm("none");
+  }
+
   async function handleDeleteAllLocalData() {
     if (!appData) return;
 
@@ -927,6 +1318,12 @@ export default function App() {
 
             await saveAppData(emptiedData);
             closeForms();
+            setNewHighwayPassNumber("");
+            setSelectedHighwayPassId(null);
+            setActiveHighwayPassForm("none");
+            setHighwayPassRefillAmount("");
+            setHighwayPassTravelFeeAmount("");
+            setHighwayPassTravelFeeLocation("");
           },
         },
       ],
@@ -962,6 +1359,7 @@ export default function App() {
             driveUser={driveUser}
             sync={appData.sync}
             statusLabel={driveUser ? "Connected" : "Not connected"}
+            initiallyCollapsed
             isSaving={isSaving}
             isDriveSyncing={isDriveSyncing}
             onConnect={handleConnectGoogleDrive}
@@ -1120,6 +1518,7 @@ export default function App() {
           sync={appData.sync}
           statusLabel={driveUser ? "Connected" : "Local only"}
           showLastSource
+          initiallyCollapsed
           isSaving={isSaving}
           isDriveSyncing={isDriveSyncing}
           onConnect={handleConnectGoogleDrive}
@@ -1127,8 +1526,7 @@ export default function App() {
           onDisconnect={handleDisconnectGoogleDrive}
         />
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Car Setup</Text>
+        <CollapsibleCard title="Car Setup" initiallyCollapsed>
           <Text style={styles.cardLine}>Fuel type: {existingCar.fuelType}</Text>
           <Text style={styles.cardLine}>
             Distance unit: {formatDistanceUnitLabel(existingCar.distanceUnit)}
@@ -1145,49 +1543,9 @@ export default function App() {
           <Text style={styles.cardLine}>
             Fuel mode: {formatFuelStateModeLabel(existingCar.fuelStateMode)}
           </Text>
-        </View>
+        </CollapsibleCard>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Current State</Text>
-
-          {latestEntry ? (
-            <>
-              <Text style={styles.cardLine}>
-                Odometer: {latestEntry.odometer}{" "}
-                {formatDistanceUnitLabel(existingCar.distanceUnit)}
-              </Text>
-              <Text style={styles.cardLine}>
-                Tank state:{" "}
-                {formatTankState(latestEntry.tankState, existingCar)}
-              </Text>
-              <Text style={styles.cardLine}>
-                Distance since previous entry:{" "}
-                {formatDistanceValue(
-                  latestEntry.distanceSinceLastEntry,
-                  existingCar.distanceUnit,
-                )}
-              </Text>
-              <Text style={styles.cardLine}>
-                Last update: {formatDateTime(latestEntry.createdAt)}
-              </Text>
-              <Text style={styles.cardLine}>
-                Last entry type: {formatEntryType(latestEntry.type)}
-              </Text>
-              {latestEntry.location ? (
-                <Text style={styles.cardLine}>
-                  Location: {latestEntry.location}
-                </Text>
-              ) : null}
-            </>
-          ) : (
-            <Text style={styles.cardLine}>
-              No readings yet. Add the first reading before the first refuel.
-            </Text>
-          )}
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Engine Oil Change Reminder</Text>
+        <CollapsibleCard title="Engine Oil Change Reminder" initiallyCollapsed>
           <Text style={styles.cardLine}>
             Current odometer:{" "}
             {formatNullableDistanceValue(
@@ -1254,7 +1612,383 @@ export default function App() {
                   : "Update Reminder"}
             </Text>
           </Pressable>
-        </View>
+        </CollapsibleCard>
+
+        <CollapsibleCard title="Highway Pass" initiallyCollapsed>
+          <View style={styles.formGroup}>
+            <View style={styles.selectorHeader}>
+              <Text style={[styles.label, styles.selectorLabel]}>
+                Select pass
+              </Text>
+              <Pressable
+                accessibilityLabel="Add highway pass"
+                accessibilityRole="button"
+                style={[
+                  styles.smallIconButton,
+                  (isSaving || isDriveSyncing) && styles.buttonDisabled,
+                ]}
+                onPress={() => openHighwayPassForm("add_pass")}
+                disabled={isSaving || isDriveSyncing}
+              >
+                <Text style={styles.smallIconButtonText}>+</Text>
+              </Pressable>
+            </View>
+
+            {highwayPasses.length === 0 ? (
+              <Text style={styles.cardLine}>
+                No highway passes added yet.
+              </Text>
+            ) : (
+              <View style={styles.stackedOptions}>
+                {highwayPasses.map((pass) => (
+                  <OptionButton
+                    key={pass.id}
+                    label={`${pass.passNumber} (${getHighwayPassBalance(
+                      pass.id,
+                    )} ${existingCar.currency})`}
+                    selected={selectedHighwayPass?.id === pass.id}
+                    onPress={() => {
+                      setSelectedHighwayPassId(pass.id);
+                      closeHighwayPassForm();
+                    }}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
+
+          {activeHighwayPassForm === "add_pass" ? (
+            <>
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Add pass number</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Example: 1234567890"
+                  value={newHighwayPassNumber}
+                  onChangeText={setNewHighwayPassNumber}
+                  autoCapitalize="none"
+                  returnKeyType="done"
+                />
+              </View>
+
+              <View style={styles.actionRow}>
+                <Pressable
+                  style={[
+                    styles.primaryButton,
+                    styles.flexButton,
+                    (isSaving || isDriveSyncing) && styles.buttonDisabled,
+                  ]}
+                  onPress={handleAddHighwayPass}
+                  disabled={isSaving || isDriveSyncing}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {isSaving || isDriveSyncing ? "Saving..." : "Add Pass"}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.secondaryButton, styles.flexButton]}
+                  onPress={closeHighwayPassForm}
+                  disabled={isSaving || isDriveSyncing}
+                >
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : null}
+
+          {selectedHighwayPass ? (
+            <>
+              <Text style={styles.cardLine}>
+                Selected pass: {selectedHighwayPass.passNumber}
+              </Text>
+              <Text style={styles.cardLine}>
+                Balance: {highwayPassBalance} {existingCar.currency}
+              </Text>
+              {latestHighwayPassRefill ? (
+                <>
+                  <Text style={styles.cardLine}>
+                    Last refill:{" "}
+                    {formatDateTime(latestHighwayPassRefill.createdAt)}
+                  </Text>
+                  <Text style={styles.cardLine}>
+                    Last refill amount: {latestHighwayPassRefill.amount}{" "}
+                    {existingCar.currency}
+                  </Text>
+                </>
+              ) : null}
+              {latestHighwayPassTravelFee ? (
+                <>
+                  <Text style={styles.cardLine}>
+                    Last travel fee:{" "}
+                    {formatDateTime(latestHighwayPassTravelFee.createdAt)}
+                  </Text>
+                  <Text style={styles.cardLine}>
+                    Last fee amount: {latestHighwayPassTravelFee.amount}{" "}
+                    {existingCar.currency}
+                  </Text>
+                  <Text style={styles.cardLine}>
+                    Last fee location: {latestHighwayPassTravelFee.location}
+                  </Text>
+                </>
+              ) : null}
+              <Text style={styles.cardLine}>
+                Total refills: {selectedHighwayPassRefills.length}
+              </Text>
+              <Text style={styles.cardLine}>
+                Total travel fees: {selectedHighwayPassTravelFees.length}
+              </Text>
+              <Text style={styles.cardLine}>
+                Total refilled: {totalHighwayPassRefillSpend}{" "}
+                {existingCar.currency}
+              </Text>
+              <Text style={styles.cardLine}>
+                Total deducted: {totalHighwayPassTravelFeeSpend}{" "}
+                {existingCar.currency}
+              </Text>
+
+              <View style={styles.actionRow}>
+                <Pressable
+                  style={[
+                    styles.primaryButton,
+                    styles.flexButton,
+                    (isSaving || isDriveSyncing || !!locationLookupTarget) &&
+                      styles.buttonDisabled,
+                  ]}
+                  onPress={() => openHighwayPassForm("refill")}
+                  disabled={
+                    isSaving || isDriveSyncing || !!locationLookupTarget
+                  }
+                >
+                  <Text style={styles.primaryButtonText}>Refill</Text>
+                </Pressable>
+
+                <Pressable
+                  style={[
+                    styles.primaryButton,
+                    styles.flexButton,
+                    (isSaving || isDriveSyncing || !!locationLookupTarget) &&
+                      styles.buttonDisabled,
+                  ]}
+                  onPress={() => openHighwayPassForm("travel_fee")}
+                  disabled={
+                    isSaving || isDriveSyncing || !!locationLookupTarget
+                  }
+                >
+                  <Text style={styles.primaryButtonText}>Travel Fee</Text>
+                </Pressable>
+              </View>
+
+              {activeHighwayPassForm === "refill" ? (
+                <>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>
+                      Refill amount ({existingCar.currency})
+                    </Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Example: 100"
+                      keyboardType="decimal-pad"
+                      value={highwayPassRefillAmount}
+                      onChangeText={setHighwayPassRefillAmount}
+                    />
+                  </View>
+
+                  <View style={styles.actionRow}>
+                    <Pressable
+                      style={[
+                        styles.primaryButton,
+                        styles.flexButton,
+                        (isSaving ||
+                          isDriveSyncing ||
+                          !!locationLookupTarget) &&
+                          styles.buttonDisabled,
+                      ]}
+                      onPress={handleSaveHighwayPassRefill}
+                      disabled={
+                        isSaving || isDriveSyncing || !!locationLookupTarget
+                      }
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {isSaving || isDriveSyncing
+                          ? "Saving..."
+                          : "Save Refill"}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={[styles.secondaryButton, styles.flexButton]}
+                      onPress={closeHighwayPassForm}
+                      disabled={
+                        isSaving || isDriveSyncing || !!locationLookupTarget
+                      }
+                    >
+                      <Text style={styles.secondaryButtonText}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : null}
+
+              {activeHighwayPassForm === "travel_fee" ? (
+                <>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>
+                      Travel fee ({existingCar.currency})
+                    </Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Example: 23"
+                      keyboardType="decimal-pad"
+                      value={highwayPassTravelFeeAmount}
+                      onChangeText={setHighwayPassTravelFeeAmount}
+                    />
+                  </View>
+
+                  <LocationInput
+                    value={highwayPassTravelFeeLocation}
+                    onChangeText={setHighwayPassTravelFeeLocation}
+                    onUseCurrentLocation={() =>
+                      handleUseCurrentLocation("highway_pass_travel_fee")
+                    }
+                    isResolving={
+                      locationLookupTarget === "highway_pass_travel_fee"
+                    }
+                    disabled={
+                      isSaving || isDriveSyncing || !!locationLookupTarget
+                    }
+                  />
+
+                  <View style={styles.actionRow}>
+                    <Pressable
+                      style={[
+                        styles.primaryButton,
+                        styles.flexButton,
+                        (isSaving ||
+                          isDriveSyncing ||
+                          !!locationLookupTarget) &&
+                          styles.buttonDisabled,
+                      ]}
+                      onPress={handleSaveHighwayPassTravelFee}
+                      disabled={
+                        isSaving || isDriveSyncing || !!locationLookupTarget
+                      }
+                    >
+                      <Text style={styles.primaryButtonText}>
+                        {locationLookupTarget === "highway_pass_travel_fee"
+                          ? "Locating..."
+                          : isSaving || isDriveSyncing
+                            ? "Saving..."
+                            : "Save Travel Fee"}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={[styles.secondaryButton, styles.flexButton]}
+                      onPress={closeHighwayPassForm}
+                      disabled={
+                        isSaving || isDriveSyncing || !!locationLookupTarget
+                      }
+                    >
+                      <Text style={styles.secondaryButtonText}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : null}
+
+              <View style={styles.historySection}>
+                <Text style={styles.sectionTitle}>Pass History</Text>
+
+                {selectedHighwayPassHistory.length === 0 ? (
+                  <Text style={styles.cardLine}>No pass activity yet.</Text>
+                ) : (
+                  selectedHighwayPassHistory.map((item) => (
+                    <View
+                      key={`${item.type}_${item.id}`}
+                      style={styles.historyItem}
+                    >
+                      <Text style={styles.historyTitle}>
+                        {item.type === "refill" ? "Refill" : "Travel fee"} -{" "}
+                        {formatDateTime(item.createdAt)}
+                      </Text>
+                      <Text style={styles.historyLine}>
+                        {item.type === "refill" ? "Refilled" : "Deducted"}:{" "}
+                        {item.amount} {existingCar.currency}
+                      </Text>
+                      {item.type === "travel_fee" && item.location ? (
+                        <Text style={styles.historyLine}>
+                          Location: {item.location}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ))
+                )}
+              </View>
+            </>
+          ) : null}
+        </CollapsibleCard>
+
+        <CollapsibleCard title="Car Wash" initiallyCollapsed>
+          {latestCarWash ? (
+            <>
+              <Text style={styles.cardLine}>
+                Last wash: {formatDateTime(latestCarWash.createdAt)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Last price: {latestCarWash.price} {existingCar.currency}
+              </Text>
+              {latestCarWash.location ? (
+                <Text style={styles.cardLine}>
+                  Location: {latestCarWash.location}
+                </Text>
+              ) : null}
+              <Text style={styles.cardLine}>
+                Total washes: {carWashes.length}
+              </Text>
+              <Text style={styles.cardLine}>
+                Total spent: {totalCarWashSpend} {existingCar.currency}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.cardLine}>No car washes recorded yet.</Text>
+          )}
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Price ({existingCar.currency})</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Example: 40"
+              keyboardType="decimal-pad"
+              value={carWashPrice}
+              onChangeText={setCarWashPrice}
+            />
+          </View>
+
+          <LocationInput
+            value={carWashLocation}
+            onChangeText={setCarWashLocation}
+            onUseCurrentLocation={() => handleUseCurrentLocation("car_wash")}
+            isResolving={locationLookupTarget === "car_wash"}
+            disabled={isSaving || isDriveSyncing || !!locationLookupTarget}
+          />
+
+          <Pressable
+            style={[
+              styles.primaryButton,
+              (isSaving || isDriveSyncing || !!locationLookupTarget) &&
+                styles.buttonDisabled,
+            ]}
+            onPress={handleSaveCarWash}
+            disabled={isSaving || isDriveSyncing || !!locationLookupTarget}
+          >
+            <Text style={styles.primaryButtonText}>
+              {locationLookupTarget === "car_wash"
+                ? "Locating..."
+                : isSaving || isDriveSyncing
+                  ? "Saving..."
+                  : "Save Car Wash"}
+            </Text>
+          </Pressable>
+        </CollapsibleCard>
 
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Fuel Consumption</Text>
@@ -1302,6 +2036,45 @@ export default function App() {
             <Text style={styles.cardLine}>
               Not enough refuels yet. You need at least 2 refuel entries to
               calculate interval consumption.
+            </Text>
+          )}
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Current State</Text>
+
+          {latestEntry ? (
+            <>
+              <Text style={styles.cardLine}>
+                Odometer: {latestEntry.odometer}{" "}
+                {formatDistanceUnitLabel(existingCar.distanceUnit)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Tank state:{" "}
+                {formatTankState(latestEntry.tankState, existingCar)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Distance since previous entry:{" "}
+                {formatDistanceValue(
+                  latestEntry.distanceSinceLastEntry,
+                  existingCar.distanceUnit,
+                )}
+              </Text>
+              <Text style={styles.cardLine}>
+                Last update: {formatDateTime(latestEntry.createdAt)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Last entry type: {formatEntryType(latestEntry.type)}
+              </Text>
+              {latestEntry.location ? (
+                <Text style={styles.cardLine}>
+                  Location: {latestEntry.location}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <Text style={styles.cardLine}>
+              No readings yet. Add the first reading before the first refuel.
             </Text>
           )}
         </View>

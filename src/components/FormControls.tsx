@@ -53,7 +53,7 @@ export function LocationInput({
       <View style={styles.locationRow}>
         <TextInput
           style={[styles.input, styles.locationTextInput]}
-          placeholder="Example: Shell Station, Casablanca"
+          placeholder="Example: Casablanca"
           value={value}
           onChangeText={onChangeText}
           editable={!disabled}

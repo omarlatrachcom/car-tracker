@@ -77,6 +77,31 @@ export const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 8,
   },
+  selectorHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  selectorLabel: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  smallIconButton: {
+    alignItems: "center",
+    backgroundColor: "#111",
+    borderRadius: 8,
+    height: 34,
+    justifyContent: "center",
+    marginLeft: 12,
+    width: 34,
+  },
+  smallIconButtonText: {
+    color: "#fff",
+    fontSize: 22,
+    fontWeight: "700",
+    lineHeight: 24,
+  },
   input: {
     backgroundColor: "#fff",
     borderWidth: 1,
@@ -157,6 +182,27 @@ export const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
   },
+  collapsibleHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  collapsibleTitle: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  collapseToggle: {
+    color: "#111",
+    fontSize: 22,
+    fontWeight: "700",
+    lineHeight: 24,
+    marginLeft: 12,
+    minWidth: 24,
+    textAlign: "center",
+  },
+  collapsibleBody: {
+    marginTop: 12,
+  },
   cardLine: {
     fontSize: 16,
     marginBottom: 10,
@@ -208,6 +254,9 @@ export const styles = StyleSheet.create({
     fontSize: 15,
     color: "#333",
     marginBottom: 6,
+  },
+  historySection: {
+    marginTop: 8,
   },
   primaryButton: {
     backgroundColor: "#111",
