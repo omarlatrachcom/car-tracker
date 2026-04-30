@@ -48,6 +48,33 @@ export type CarWash = {
   updatedAt: string;
 };
 
+export type CarInsuranceRecord = {
+  id: string;
+  carId: string;
+  nextDueDate: string;
+  price: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VehicleInspectionRecord = {
+  id: string;
+  carId: string;
+  nextDueDate: string;
+  cost: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OtherExpense = {
+  id: string;
+  carId: string;
+  item: string;
+  cost: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type HighwayPass = {
   id: string;
   carId: string;
@@ -89,6 +116,9 @@ export type AppData = {
   cars: Car[];
   entries: Entry[];
   carWashes: CarWash[];
+  carInsuranceRecords: CarInsuranceRecord[];
+  vehicleInspectionRecords: VehicleInspectionRecord[];
+  otherExpenses: OtherExpense[];
   highwayPasses: HighwayPass[];
   highwayPassRefills: HighwayPassRefill[];
   highwayPassTravelFees: HighwayPassTravelFee[];

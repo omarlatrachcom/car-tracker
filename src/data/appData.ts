@@ -1,12 +1,15 @@
 import type {
   AppData,
   Car,
+  CarInsuranceRecord,
   CarWash,
   Entry,
   HighwayPass,
   HighwayPassRefill,
   HighwayPassTravelFee,
+  OtherExpense,
   SyncState,
+  VehicleInspectionRecord,
 } from "../types";
 import { isRecord } from "../utils/object";
 
@@ -27,6 +30,9 @@ export function createEmptyAppData(): AppData {
     cars: [],
     entries: [],
     carWashes: [],
+    carInsuranceRecords: [],
+    vehicleInspectionRecords: [],
+    otherExpenses: [],
     highwayPasses: [],
     highwayPassRefills: [],
     highwayPassTravelFees: [],
@@ -135,6 +141,93 @@ export function normalizeAppData(data: Partial<AppData>): AppData {
               ? carWash.updatedAt
               : fallbackNow,
         }))
+    : [];
+
+  const carInsuranceRecords: CarInsuranceRecord[] = Array.isArray(
+    data.carInsuranceRecords,
+  )
+    ? (data.carInsuranceRecords as Array<Partial<CarInsuranceRecord>>).map(
+        (record) => ({
+          id:
+            typeof record.id === "string"
+              ? record.id
+              : createId("car_insurance"),
+          carId: typeof record.carId === "string" ? record.carId : "",
+          nextDueDate:
+            typeof record.nextDueDate === "string"
+              ? record.nextDueDate.trim()
+              : "",
+          price:
+            typeof record.price === "number" &&
+            Number.isFinite(record.price) &&
+            record.price >= 0
+              ? record.price
+              : 0,
+          createdAt:
+            typeof record.createdAt === "string"
+              ? record.createdAt
+              : fallbackNow,
+          updatedAt:
+            typeof record.updatedAt === "string"
+              ? record.updatedAt
+              : fallbackNow,
+        }),
+      )
+    : [];
+
+  const vehicleInspectionRecords: VehicleInspectionRecord[] = Array.isArray(
+    data.vehicleInspectionRecords,
+  )
+    ? (
+        data.vehicleInspectionRecords as Array<
+          Partial<VehicleInspectionRecord>
+        >
+      ).map((record) => ({
+        id:
+          typeof record.id === "string"
+            ? record.id
+            : createId("vehicle_inspection"),
+        carId: typeof record.carId === "string" ? record.carId : "",
+        nextDueDate:
+          typeof record.nextDueDate === "string"
+            ? record.nextDueDate.trim()
+            : "",
+        cost:
+          typeof record.cost === "number" &&
+          Number.isFinite(record.cost) &&
+          record.cost >= 0
+            ? record.cost
+            : 0,
+        createdAt:
+          typeof record.createdAt === "string" ? record.createdAt : fallbackNow,
+        updatedAt:
+          typeof record.updatedAt === "string" ? record.updatedAt : fallbackNow,
+      }))
+    : [];
+
+  const otherExpenses: OtherExpense[] = Array.isArray(data.otherExpenses)
+    ? (data.otherExpenses as Array<Partial<OtherExpense>>).map((expense) => ({
+        id:
+          typeof expense.id === "string"
+            ? expense.id
+            : createId("other_expense"),
+        carId: typeof expense.carId === "string" ? expense.carId : "",
+        item: typeof expense.item === "string" ? expense.item.trim() : "",
+        cost:
+          typeof expense.cost === "number" &&
+          Number.isFinite(expense.cost) &&
+          expense.cost >= 0
+            ? expense.cost
+            : 0,
+        createdAt:
+          typeof expense.createdAt === "string"
+            ? expense.createdAt
+            : fallbackNow,
+        updatedAt:
+          typeof expense.updatedAt === "string"
+            ? expense.updatedAt
+            : fallbackNow,
+      }))
     : [];
 
   const highwayPasses: HighwayPass[] = Array.isArray(data.highwayPasses)
@@ -280,6 +373,9 @@ export function normalizeAppData(data: Partial<AppData>): AppData {
     cars,
     entries,
     carWashes,
+    carInsuranceRecords,
+    vehicleInspectionRecords,
+    otherExpenses,
     highwayPasses,
     highwayPassRefills,
     highwayPassTravelFees,
@@ -324,6 +420,30 @@ export function mergeAppData(localData: AppData, remoteData: AppData) {
     remoteData.carWashes,
     latestReset,
   );
+  const filteredLocalCarInsuranceRecords = filterRecordsByReset(
+    localData.carInsuranceRecords,
+    latestReset,
+  );
+  const filteredRemoteCarInsuranceRecords = filterRecordsByReset(
+    remoteData.carInsuranceRecords,
+    latestReset,
+  );
+  const filteredLocalVehicleInspectionRecords = filterRecordsByReset(
+    localData.vehicleInspectionRecords,
+    latestReset,
+  );
+  const filteredRemoteVehicleInspectionRecords = filterRecordsByReset(
+    remoteData.vehicleInspectionRecords,
+    latestReset,
+  );
+  const filteredLocalOtherExpenses = filterRecordsByReset(
+    localData.otherExpenses,
+    latestReset,
+  );
+  const filteredRemoteOtherExpenses = filterRecordsByReset(
+    remoteData.otherExpenses,
+    latestReset,
+  );
   const filteredLocalHighwayPasses = filterRecordsByReset(
     localData.highwayPasses,
     latestReset,
@@ -359,6 +479,18 @@ export function mergeAppData(localData: AppData, remoteData: AppData) {
     carWashes: mergeEntityArrays(
       filteredLocalCarWashes,
       filteredRemoteCarWashes,
+    ),
+    carInsuranceRecords: mergeEntityArrays(
+      filteredLocalCarInsuranceRecords,
+      filteredRemoteCarInsuranceRecords,
+    ),
+    vehicleInspectionRecords: mergeEntityArrays(
+      filteredLocalVehicleInspectionRecords,
+      filteredRemoteVehicleInspectionRecords,
+    ),
+    otherExpenses: mergeEntityArrays(
+      filteredLocalOtherExpenses,
+      filteredRemoteOtherExpenses,
     ),
     highwayPasses: mergeEntityArrays(
       filteredLocalHighwayPasses,

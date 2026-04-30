@@ -2,6 +2,7 @@
   "expo": {
     "name": "car-tracker",
     "slug": "car-tracker",
+    "owner": "omarlatrachcom",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

@@ -43,6 +43,7 @@ import type {
   ActiveForm,
   AppData,
   Car,
+  CarInsuranceRecord,
   CarWash,
   DistanceUnit,
   Entry,
@@ -54,8 +55,10 @@ import type {
   HighwayPassRefill,
   HighwayPassTravelFee,
   LocationLookupTarget,
+  OtherExpense,
   RefuelIntervalMetric,
   RefuelResolution,
+  VehicleInspectionRecord,
 } from "./src/types";
 import {
   calculateTankStateAfterRefuel,
@@ -89,6 +92,84 @@ import {
 import { getErrorMessage, isRecord } from "./src/utils/object";
 
 type HighwayPassForm = "none" | "add_pass" | "refill" | "travel_fee";
+type ReportStep = "home" | "period" | "date" | "summary";
+type ReportPeriod = "monthly" | "yearly";
+type ExpenseSection =
+  | "fuel"
+  | "highway_pass"
+  | "car_wash"
+  | "car_insurance"
+  | "vehicle_inspection"
+  | "other";
+type WarningSeverity = "caution" | "danger";
+type DueDateStatus = "none" | "upcoming" | "due";
+
+const ENGINE_OIL_UPCOMING_THRESHOLD_KM = 100;
+const KM_TO_MILES = 0.621371;
+
+type ExpenseEvent = {
+  id: string;
+  section: ExpenseSection;
+  amount: number;
+  createdAt: string;
+  monthKey: string;
+  yearKey: string;
+  dayKey: string;
+};
+
+type ReportAmountRow = {
+  key: string;
+  label: string;
+  amount: number;
+};
+
+const EXPENSE_SECTION_LABELS: Record<ExpenseSection, string> = {
+  fuel: "Fuel",
+  highway_pass: "Highway Pass",
+  car_wash: "Car Wash",
+  car_insurance: "Car Insurance",
+  vehicle_inspection: "Vehicle Inspection",
+  other: "Other Expenses",
+};
+
+const EXPENSE_SECTION_ORDER: ExpenseSection[] = [
+  "fuel",
+  "highway_pass",
+  "car_wash",
+  "car_insurance",
+  "vehicle_inspection",
+  "other",
+];
+
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+const SHORT_MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 export default function App() {
   const [appData, setAppData] = useState<AppData | null>(null);
@@ -99,6 +180,13 @@ export default function App() {
     useState<LocationLookupTarget>(null);
   const [driveUser, setDriveUser] = useState<GoogleDriveUser | null>(null);
   const [globalWarningMessage, setGlobalWarningMessage] = useState<
+    string | null
+  >(null);
+  const [globalWarningSeverity, setGlobalWarningSeverity] =
+    useState<WarningSeverity | null>(null);
+  const [reportStep, setReportStep] = useState<ReportStep>("home");
+  const [reportPeriod, setReportPeriod] = useState<ReportPeriod | null>(null);
+  const [selectedReportPeriodKey, setSelectedReportPeriodKey] = useState<
     string | null
   >(null);
 
@@ -135,6 +223,12 @@ export default function App() {
     useState("");
   const [carWashPrice, setCarWashPrice] = useState("");
   const [carWashLocation, setCarWashLocation] = useState("");
+  const [carInsuranceDueDate, setCarInsuranceDueDate] = useState("");
+  const [carInsurancePrice, setCarInsurancePrice] = useState("");
+  const [vehicleInspectionDueDate, setVehicleInspectionDueDate] = useState("");
+  const [vehicleInspectionCost, setVehicleInspectionCost] = useState("");
+  const [otherExpenseItem, setOtherExpenseItem] = useState("");
+  const [otherExpenseCost, setOtherExpenseCost] = useState("");
   const [engineOilNextDueOdometerInput, setEngineOilNextDueOdometerInput] =
     useState("");
 
@@ -461,6 +555,55 @@ export default function App() {
     [carWashes],
   );
 
+  const carInsuranceRecords = useMemo(() => {
+    if (!appData || !existingCar) return [] as CarInsuranceRecord[];
+    return appData.carInsuranceRecords
+      .filter((record) => record.carId === existingCar.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [appData, existingCar]);
+
+  const latestCarInsurance = carInsuranceRecords[0] ?? null;
+  const totalCarInsuranceSpend = useMemo(
+    () =>
+      roundTo2(
+        carInsuranceRecords.reduce((sum, record) => sum + record.price, 0),
+      ),
+    [carInsuranceRecords],
+  );
+
+  const vehicleInspectionRecords = useMemo(() => {
+    if (!appData || !existingCar) return [] as VehicleInspectionRecord[];
+    return appData.vehicleInspectionRecords
+      .filter((record) => record.carId === existingCar.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [appData, existingCar]);
+
+  const latestVehicleInspection = vehicleInspectionRecords[0] ?? null;
+  const totalVehicleInspectionSpend = useMemo(
+    () =>
+      roundTo2(
+        vehicleInspectionRecords.reduce(
+          (sum, record) => sum + record.cost,
+          0,
+        ),
+      ),
+    [vehicleInspectionRecords],
+  );
+
+  const otherExpenses = useMemo(() => {
+    if (!appData || !existingCar) return [] as OtherExpense[];
+    return appData.otherExpenses
+      .filter((expense) => expense.carId === existingCar.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [appData, existingCar]);
+
+  const latestOtherExpense = otherExpenses[0] ?? null;
+  const totalOtherExpenseSpend = useMemo(
+    () =>
+      roundTo2(otherExpenses.reduce((sum, expense) => sum + expense.cost, 0)),
+    [otherExpenses],
+  );
+
   const highwayPasses = useMemo(() => {
     if (!appData || !existingCar) return [] as HighwayPass[];
     return appData.highwayPasses
@@ -575,6 +718,40 @@ export default function App() {
     );
   }, [selectedHighwayPassRefills, selectedHighwayPassTravelFees]);
 
+  const reportExpenseEvents = useMemo(
+    () =>
+      buildExpenseEvents({
+        entries: carEntries,
+        carWashes,
+        carInsuranceRecords,
+        vehicleInspectionRecords,
+        highwayPassRefills,
+        otherExpenses,
+      }),
+    [
+      carEntries,
+      carWashes,
+      carInsuranceRecords,
+      vehicleInspectionRecords,
+      highwayPassRefills,
+      otherExpenses,
+    ],
+  );
+
+  const reportDateOptions = useMemo(() => {
+    if (!reportPeriod) return [] as ReportAmountRow[];
+    return getReportDateOptions(reportExpenseEvents, reportPeriod);
+  }, [reportExpenseEvents, reportPeriod]);
+
+  const reportSummary = useMemo(() => {
+    if (!reportPeriod || !selectedReportPeriodKey) return null;
+    return buildReportSummary(
+      reportExpenseEvents,
+      reportPeriod,
+      selectedReportPeriodKey,
+    );
+  }, [reportExpenseEvents, reportPeriod, selectedReportPeriodKey]);
+
   const isEngineOilChangeOverdue = useMemo(() => {
     if (
       !existingCar ||
@@ -587,11 +764,91 @@ export default function App() {
     return currentOdometer >= existingCar.engineOilNextDueOdometer;
   }, [currentOdometer, existingCar?.engineOilNextDueOdometer]);
 
+  const engineOilUpcomingThreshold = useMemo(() => {
+    if (!existingCar) return ENGINE_OIL_UPCOMING_THRESHOLD_KM;
+    return getEngineOilUpcomingThreshold(existingCar.distanceUnit);
+  }, [existingCar?.distanceUnit]);
+
+  const isEngineOilChangeDueSoon = useMemo(() => {
+    if (
+      !existingCar ||
+      currentOdometer === null ||
+      existingCar.engineOilNextDueOdometer === null ||
+      isEngineOilChangeOverdue
+    ) {
+      return false;
+    }
+
+    const distanceUntilDue =
+      existingCar.engineOilNextDueOdometer - currentOdometer;
+
+    return distanceUntilDue <= engineOilUpcomingThreshold;
+  }, [
+    currentOdometer,
+    engineOilUpcomingThreshold,
+    existingCar?.engineOilNextDueOdometer,
+    isEngineOilChangeOverdue,
+  ]);
+
+  const carInsuranceDueStatus = useMemo(
+    () => getDueDateStatus(latestCarInsurance?.nextDueDate ?? null),
+    [latestCarInsurance?.nextDueDate],
+  );
+
+  const vehicleInspectionDueStatus = useMemo(
+    () => getDueDateStatus(latestVehicleInspection?.nextDueDate ?? null),
+    [latestVehicleInspection?.nextDueDate],
+  );
+
   useEffect(() => {
-    setGlobalWarningMessage(
-      isEngineOilChangeOverdue ? ENGINE_OIL_OVERDUE_MESSAGE : null,
+    const messages: string[] = [];
+    let severity: WarningSeverity | null = null;
+
+    if (isEngineOilChangeOverdue) {
+      messages.push(ENGINE_OIL_OVERDUE_MESSAGE);
+      severity = "danger";
+    } else if (isEngineOilChangeDueSoon && existingCar) {
+      messages.push(getEngineOilDueSoonMessage(existingCar.distanceUnit));
+      severity = "caution";
+    }
+
+    const insuranceWarning = getDueDateWarningMessage(
+      "Car insurance",
+      latestCarInsurance?.nextDueDate ?? null,
+      carInsuranceDueStatus,
     );
-  }, [isEngineOilChangeOverdue]);
+    if (insuranceWarning) {
+      messages.push(insuranceWarning);
+      severity =
+        carInsuranceDueStatus === "due" || severity === "danger"
+          ? "danger"
+          : "caution";
+    }
+
+    const inspectionWarning = getDueDateWarningMessage(
+      "Vehicle inspection",
+      latestVehicleInspection?.nextDueDate ?? null,
+      vehicleInspectionDueStatus,
+    );
+    if (inspectionWarning) {
+      messages.push(inspectionWarning);
+      severity =
+        vehicleInspectionDueStatus === "due" || severity === "danger"
+          ? "danger"
+          : "caution";
+    }
+
+    setGlobalWarningMessage(messages.length > 0 ? messages.join("\n") : null);
+    setGlobalWarningSeverity(severity);
+  }, [
+    carInsuranceDueStatus,
+    existingCar?.distanceUnit,
+    isEngineOilChangeOverdue,
+    isEngineOilChangeDueSoon,
+    latestCarInsurance?.nextDueDate,
+    latestVehicleInspection?.nextDueDate,
+    vehicleInspectionDueStatus,
+  ]);
 
   useEffect(() => {
     if (!existingCar || existingCar.engineOilNextDueOdometer === null) {
@@ -603,6 +860,28 @@ export default function App() {
       String(existingCar.engineOilNextDueOdometer),
     );
   }, [existingCar?.id, existingCar?.engineOilNextDueOdometer]);
+
+  useEffect(() => {
+    if (!existingCar || !latestCarInsurance) {
+      setCarInsuranceDueDate("");
+      setCarInsurancePrice("");
+      return;
+    }
+
+    setCarInsuranceDueDate(latestCarInsurance.nextDueDate);
+    setCarInsurancePrice(String(latestCarInsurance.price));
+  }, [existingCar?.id, latestCarInsurance?.id]);
+
+  useEffect(() => {
+    if (!existingCar || !latestVehicleInspection) {
+      setVehicleInspectionDueDate("");
+      setVehicleInspectionCost("");
+      return;
+    }
+
+    setVehicleInspectionDueDate(latestVehicleInspection.nextDueDate);
+    setVehicleInspectionCost(String(latestVehicleInspection.cost));
+  }, [existingCar?.id, latestVehicleInspection?.id]);
 
   const readingDistancePreview = useMemo(() => {
     const odometer = parseDecimal(readingOdometer);
@@ -734,6 +1013,9 @@ export default function App() {
       cars: [newCar],
       entries: [],
       carWashes: [],
+      carInsuranceRecords: [],
+      vehicleInspectionRecords: [],
+      otherExpenses: [],
       highwayPasses: [],
       highwayPassRefills: [],
       highwayPassTravelFees: [],
@@ -754,6 +1036,12 @@ export default function App() {
     setHighwayPassRefillAmount("");
     setHighwayPassTravelFeeAmount("");
     setHighwayPassTravelFeeLocation("");
+    setCarInsuranceDueDate("");
+    setCarInsurancePrice("");
+    setVehicleInspectionDueDate("");
+    setVehicleInspectionCost("");
+    setOtherExpenseItem("");
+    setOtherExpenseCost("");
   }
 
   function openReadingForm() {
@@ -812,6 +1100,40 @@ export default function App() {
     setHighwayPassRefillAmount("");
     setHighwayPassTravelFeeAmount("");
     setHighwayPassTravelFeeLocation("");
+  }
+
+  function openReportFlow() {
+    setReportStep("period");
+    setReportPeriod(null);
+    setSelectedReportPeriodKey(null);
+  }
+
+  function handleReportBack() {
+    if (reportStep === "summary") {
+      setReportStep("date");
+      return;
+    }
+
+    if (reportStep === "date") {
+      setSelectedReportPeriodKey(null);
+      setReportStep("period");
+      return;
+    }
+
+    setReportStep("home");
+    setReportPeriod(null);
+    setSelectedReportPeriodKey(null);
+  }
+
+  function handleReportPeriodSelect(period: ReportPeriod) {
+    setReportPeriod(period);
+    setSelectedReportPeriodKey(null);
+    setReportStep("date");
+  }
+
+  function handleReportDateSelect(periodKey: string) {
+    setSelectedReportPeriodKey(periodKey);
+    setReportStep("summary");
   }
 
   async function handleUseCurrentLocation(
@@ -1088,6 +1410,101 @@ export default function App() {
     await saveAppData(nextData);
   }
 
+  async function handleSaveCarInsurance() {
+    if (!appData || !existingCar) return;
+
+    const nextDueDate = normalizeDateInput(carInsuranceDueDate);
+    const price = parseDecimal(carInsurancePrice);
+
+    if (!nextDueDate) {
+      Alert.alert(
+        "Validation error",
+        "Please enter a valid car insurance due date as YYYY-MM-DD.",
+      );
+      return;
+    }
+
+    if (!isNonNegativeNumber(price)) {
+      Alert.alert(
+        "Validation error",
+        "Please enter a valid car insurance price.",
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const newRecord: CarInsuranceRecord = {
+      id: createId("car_insurance"),
+      carId: existingCar.id,
+      nextDueDate,
+      price,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.map((car) =>
+        car.id === existingCar.id ? { ...car, updatedAt: now } : car,
+      ),
+      carInsuranceRecords: [newRecord, ...appData.carInsuranceRecords],
+    });
+
+    await saveAppData(nextData);
+    setCarInsuranceDueDate(nextDueDate);
+    setCarInsurancePrice(String(price));
+  }
+
+  async function handleSaveVehicleInspection() {
+    if (!appData || !existingCar) return;
+
+    const nextDueDate = normalizeDateInput(vehicleInspectionDueDate);
+    const cost = parseDecimal(vehicleInspectionCost);
+
+    if (!nextDueDate) {
+      Alert.alert(
+        "Validation error",
+        "Please enter a valid vehicle inspection due date as YYYY-MM-DD.",
+      );
+      return;
+    }
+
+    if (!isNonNegativeNumber(cost)) {
+      Alert.alert(
+        "Validation error",
+        "Please enter a valid vehicle inspection cost.",
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const newRecord: VehicleInspectionRecord = {
+      id: createId("vehicle_inspection"),
+      carId: existingCar.id,
+      nextDueDate,
+      cost,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.map((car) =>
+        car.id === existingCar.id ? { ...car, updatedAt: now } : car,
+      ),
+      vehicleInspectionRecords: [
+        newRecord,
+        ...appData.vehicleInspectionRecords,
+      ],
+    });
+
+    await saveAppData(nextData);
+    setVehicleInspectionDueDate(nextDueDate);
+    setVehicleInspectionCost(String(cost));
+  }
+
   async function handleSaveCarWash() {
     if (!appData || !existingCar) return;
 
@@ -1125,6 +1542,47 @@ export default function App() {
     await saveAppData(nextData);
     setCarWashPrice("");
     setCarWashLocation("");
+  }
+
+  async function handleSaveOtherExpense() {
+    if (!appData || !existingCar) return;
+
+    const item = otherExpenseItem.trim();
+    const cost = parseDecimal(otherExpenseCost);
+
+    if (!item) {
+      Alert.alert("Validation error", "Please enter the expense item.");
+      return;
+    }
+
+    if (!isNonNegativeNumber(cost)) {
+      Alert.alert("Validation error", "Please enter a valid expense cost.");
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const newExpense: OtherExpense = {
+      id: createId("other_expense"),
+      carId: existingCar.id,
+      item,
+      cost,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.map((car) =>
+        car.id === existingCar.id ? { ...car, updatedAt: now } : car,
+      ),
+      otherExpenses: [newExpense, ...appData.otherExpenses],
+    });
+
+    await saveAppData(nextData);
+    setOtherExpenseItem("");
+    setOtherExpenseCost("");
   }
 
   async function handleAddHighwayPass() {
@@ -1324,6 +1782,12 @@ export default function App() {
             setHighwayPassRefillAmount("");
             setHighwayPassTravelFeeAmount("");
             setHighwayPassTravelFeeLocation("");
+            setCarInsuranceDueDate("");
+            setCarInsurancePrice("");
+            setVehicleInspectionDueDate("");
+            setVehicleInspectionCost("");
+            setOtherExpenseItem("");
+            setOtherExpenseCost("");
           },
         },
       ],
@@ -1482,36 +1946,236 @@ export default function App() {
     );
   }
 
-  const hasGlobalWarning = globalWarningMessage !== null;
+  const hasDangerWarning = globalWarningSeverity === "danger";
+  const hasCautionWarning = globalWarningSeverity === "caution";
+
+  if (reportStep !== "home") {
+    return (
+      <SafeAreaView
+        style={[
+          styles.safeArea,
+          hasDangerWarning && styles.safeAreaWarning,
+          hasCautionWarning && styles.safeAreaCaution,
+        ]}
+      >
+        <ScrollView
+          style={
+            hasDangerWarning
+              ? styles.warningBackground
+              : hasCautionWarning
+                ? styles.cautionBackground
+                : undefined
+          }
+          contentContainerStyle={[
+            styles.container,
+            hasDangerWarning && styles.containerWarning,
+            hasCautionWarning && styles.containerCaution,
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Pressable style={styles.backButton} onPress={handleReportBack}>
+            <Text style={styles.backButtonText}>Back</Text>
+          </Pressable>
+
+          <Text
+            style={[
+              styles.title,
+              hasDangerWarning && styles.titleOnWarning,
+              hasCautionWarning && styles.titleOnCaution,
+            ]}
+          >
+            Expense Reports
+          </Text>
+          <Text
+            style={[
+              styles.subtitle,
+              hasDangerWarning && styles.subtitleOnWarning,
+              hasCautionWarning && styles.subtitleOnCaution,
+            ]}
+          >
+            Review fuel, highway pass, car wash, insurance, inspection, and
+            other expense totals.
+          </Text>
+
+          {globalWarningMessage ? (
+            <View
+              style={[
+                styles.globalWarningBanner,
+                hasCautionWarning && styles.globalCautionBanner,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.globalWarningText,
+                  hasCautionWarning && styles.globalCautionText,
+                ]}
+              >
+                {globalWarningMessage}
+              </Text>
+            </View>
+          ) : null}
+
+          {reportStep === "period" ? (
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Select Report Type</Text>
+              <View style={styles.stackedOptions}>
+                <OptionButton
+                  label="Monthly"
+                  selected={false}
+                  onPress={() => handleReportPeriodSelect("monthly")}
+                />
+                <OptionButton
+                  label="Yearly"
+                  selected={false}
+                  onPress={() => handleReportPeriodSelect("yearly")}
+                />
+              </View>
+            </View>
+          ) : null}
+
+          {reportStep === "date" && reportPeriod ? (
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>
+                {reportPeriod === "monthly" ? "Select Month" : "Select Year"}
+              </Text>
+
+              <View style={styles.stackedOptions}>
+                {reportDateOptions.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    style={styles.reportListButton}
+                    onPress={() => handleReportDateSelect(option.key)}
+                  >
+                    <Text style={styles.reportListButtonText}>
+                      {option.label}
+                    </Text>
+                    <Text style={styles.reportListButtonValue}>
+                      {formatMoney(option.amount, existingCar.currency)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {reportStep === "summary" && reportPeriod && reportSummary ? (
+            <>
+              <View style={styles.reportTotalCard}>
+                <Text style={styles.reportTotalLabel}>
+                  {formatReportPeriodTitle(
+                    reportPeriod,
+                    selectedReportPeriodKey,
+                  )}
+                </Text>
+                <Text style={styles.reportTotalValue}>
+                  {formatMoney(reportSummary.total, existingCar.currency)}
+                </Text>
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Section Totals</Text>
+                {reportSummary.sectionRows.map((row) => (
+                  <View key={row.key} style={styles.reportSummaryRow}>
+                    <Text style={styles.reportSummaryLabel}>{row.label}</Text>
+                    <Text style={styles.reportSummaryValue}>
+                      {formatMoney(row.amount, existingCar.currency)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Expenses By Section</Text>
+                <ReportBarChart
+                  rows={reportSummary.sectionRows}
+                  currency={existingCar.currency}
+                  emptyLabel="No expenses in this period."
+                />
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Expenses By Date</Text>
+                <ReportBarChart
+                  rows={reportSummary.dateRows}
+                  currency={existingCar.currency}
+                  emptyLabel="No dated expenses in this period."
+                />
+              </View>
+            </>
+          ) : null}
+
+          <StatusBar style="auto" />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView
-      style={[styles.safeArea, hasGlobalWarning && styles.safeAreaWarning]}
+      style={[
+        styles.safeArea,
+        hasDangerWarning && styles.safeAreaWarning,
+        hasCautionWarning && styles.safeAreaCaution,
+      ]}
     >
       <ScrollView
-        style={hasGlobalWarning ? styles.warningBackground : undefined}
+        style={
+          hasDangerWarning
+            ? styles.warningBackground
+            : hasCautionWarning
+              ? styles.cautionBackground
+              : undefined
+        }
         contentContainerStyle={[
           styles.container,
-          hasGlobalWarning && styles.containerWarning,
+          hasDangerWarning && styles.containerWarning,
+          hasCautionWarning && styles.containerCaution,
         ]}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={[styles.title, hasGlobalWarning && styles.titleOnWarning]}>
+        <Text
+          style={[
+            styles.title,
+            hasDangerWarning && styles.titleOnWarning,
+            hasCautionWarning && styles.titleOnCaution,
+          ]}
+        >
           {existingCar.name}
         </Text>
         <Text
-          style={[styles.subtitle, hasGlobalWarning && styles.subtitleOnWarning]}
+          style={[
+            styles.subtitle,
+            hasDangerWarning && styles.subtitleOnWarning,
+            hasCautionWarning && styles.subtitleOnCaution,
+          ]}
         >
           Every local save syncs to Google Drive automatically when connected.
         </Text>
 
         {globalWarningMessage ? (
-          <View style={styles.globalWarningBanner}>
-            <Text style={styles.globalWarningText}>
+          <View
+            style={[
+              styles.globalWarningBanner,
+              hasCautionWarning && styles.globalCautionBanner,
+            ]}
+          >
+            <Text
+              style={[
+                styles.globalWarningText,
+                hasCautionWarning && styles.globalCautionText,
+              ]}
+            >
               {globalWarningMessage}
             </Text>
           </View>
         ) : null}
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Reporting</Text>
+          <Pressable style={styles.primaryButton} onPress={openReportFlow}>
+            <Text style={styles.primaryButtonText}>Open Expense Report</Text>
+          </Pressable>
+        </View>
 
         <SyncCard
           driveUser={driveUser}
@@ -1545,6 +2209,151 @@ export default function App() {
           </Text>
         </CollapsibleCard>
 
+        <CollapsibleCard title="Car Insurance" initiallyCollapsed>
+          {latestCarInsurance ? (
+            <>
+              <Text style={styles.cardLine}>
+                Next due: {formatDateForDisplay(latestCarInsurance.nextDueDate)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Price: {latestCarInsurance.price} {existingCar.currency}
+              </Text>
+              <Text style={styles.cardLine}>
+                Last update: {formatDateTime(latestCarInsurance.createdAt)}
+              </Text>
+              <Text
+                style={[
+                  styles.cardLine,
+                  carInsuranceDueStatus === "due"
+                    ? styles.overdueStatusText
+                    : carInsuranceDueStatus === "upcoming"
+                      ? styles.upcomingStatusText
+                      : styles.okStatusText,
+                ]}
+              >
+                Status: {formatDueDateStatus(carInsuranceDueStatus)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Total insurance spent: {totalCarInsuranceSpend}{" "}
+                {existingCar.currency}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.cardLine}>
+              No car insurance reminder set yet.
+            </Text>
+          )}
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Next due date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Example: 2026-05-30"
+              value={carInsuranceDueDate}
+              onChangeText={setCarInsuranceDueDate}
+              editable={!isSaving && !isDriveSyncing}
+            />
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Price ({existingCar.currency})</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Example: 1200"
+              keyboardType="decimal-pad"
+              value={carInsurancePrice}
+              onChangeText={setCarInsurancePrice}
+              editable={!isSaving && !isDriveSyncing}
+            />
+          </View>
+
+          <Pressable
+            style={[
+              styles.primaryButton,
+              (isSaving || isDriveSyncing) && styles.buttonDisabled,
+            ]}
+            onPress={handleSaveCarInsurance}
+            disabled={isSaving || isDriveSyncing}
+          >
+            <Text style={styles.primaryButtonText}>
+              {isSaving || isDriveSyncing ? "Saving..." : "Save Insurance"}
+            </Text>
+          </Pressable>
+        </CollapsibleCard>
+
+        <CollapsibleCard title="Vehicle Inspection" initiallyCollapsed>
+          {latestVehicleInspection ? (
+            <>
+              <Text style={styles.cardLine}>
+                Next due:{" "}
+                {formatDateForDisplay(latestVehicleInspection.nextDueDate)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Cost: {latestVehicleInspection.cost} {existingCar.currency}
+              </Text>
+              <Text style={styles.cardLine}>
+                Last update: {formatDateTime(latestVehicleInspection.createdAt)}
+              </Text>
+              <Text
+                style={[
+                  styles.cardLine,
+                  vehicleInspectionDueStatus === "due"
+                    ? styles.overdueStatusText
+                    : vehicleInspectionDueStatus === "upcoming"
+                      ? styles.upcomingStatusText
+                      : styles.okStatusText,
+                ]}
+              >
+                Status: {formatDueDateStatus(vehicleInspectionDueStatus)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Total inspection spent: {totalVehicleInspectionSpend}{" "}
+                {existingCar.currency}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.cardLine}>
+              No vehicle inspection reminder set yet.
+            </Text>
+          )}
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Next due date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Example: 2026-05-30"
+              value={vehicleInspectionDueDate}
+              onChangeText={setVehicleInspectionDueDate}
+              editable={!isSaving && !isDriveSyncing}
+            />
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Cost ({existingCar.currency})</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Example: 300"
+              keyboardType="decimal-pad"
+              value={vehicleInspectionCost}
+              onChangeText={setVehicleInspectionCost}
+              editable={!isSaving && !isDriveSyncing}
+            />
+          </View>
+
+          <Pressable
+            style={[
+              styles.primaryButton,
+              (isSaving || isDriveSyncing) && styles.buttonDisabled,
+            ]}
+            onPress={handleSaveVehicleInspection}
+            disabled={isSaving || isDriveSyncing}
+          >
+            <Text style={styles.primaryButtonText}>
+              {isSaving || isDriveSyncing ? "Saving..." : "Save Inspection"}
+            </Text>
+          </Pressable>
+        </CollapsibleCard>
+
         <CollapsibleCard title="Engine Oil Change Reminder" initiallyCollapsed>
           <Text style={styles.cardLine}>
             Current odometer:{" "}
@@ -1571,6 +2380,8 @@ export default function App() {
               styles.cardLine,
               isEngineOilChangeOverdue
                 ? styles.overdueStatusText
+                : isEngineOilChangeDueSoon
+                  ? styles.upcomingStatusText
                 : styles.okStatusText,
             ]}
           >
@@ -1579,7 +2390,11 @@ export default function App() {
               ? "No reminder set"
               : isEngineOilChangeOverdue
                 ? "Overdue"
-                : "Not overdue"}
+                : isEngineOilChangeDueSoon
+                  ? `Due within ${formatEngineOilThreshold(
+                      existingCar.distanceUnit,
+                    )}`
+                  : "Not due soon"}
           </Text>
 
           <View style={styles.formGroup}>
@@ -1988,6 +2803,83 @@ export default function App() {
                   : "Save Car Wash"}
             </Text>
           </Pressable>
+        </CollapsibleCard>
+
+        <CollapsibleCard title="Other Expenses" initiallyCollapsed>
+          {latestOtherExpense ? (
+            <>
+              <Text style={styles.cardLine}>
+                Last expense: {latestOtherExpense.item}
+              </Text>
+              <Text style={styles.cardLine}>
+                Last cost: {latestOtherExpense.cost} {existingCar.currency}
+              </Text>
+              <Text style={styles.cardLine}>
+                Last saved: {formatDateTime(latestOtherExpense.createdAt)}
+              </Text>
+              <Text style={styles.cardLine}>
+                Total expenses: {otherExpenses.length}
+              </Text>
+              <Text style={styles.cardLine}>
+                Total spent: {totalOtherExpenseSpend} {existingCar.currency}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.cardLine}>No other expenses recorded yet.</Text>
+          )}
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Item</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Example: Parking"
+              value={otherExpenseItem}
+              onChangeText={setOtherExpenseItem}
+              editable={!isSaving && !isDriveSyncing}
+            />
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Cost ({existingCar.currency})</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Example: 20"
+              keyboardType="decimal-pad"
+              value={otherExpenseCost}
+              onChangeText={setOtherExpenseCost}
+              editable={!isSaving && !isDriveSyncing}
+            />
+          </View>
+
+          <Pressable
+            style={[
+              styles.primaryButton,
+              (isSaving || isDriveSyncing) && styles.buttonDisabled,
+            ]}
+            onPress={handleSaveOtherExpense}
+            disabled={isSaving || isDriveSyncing}
+          >
+            <Text style={styles.primaryButtonText}>
+              {isSaving || isDriveSyncing ? "Saving..." : "Save Expense"}
+            </Text>
+          </Pressable>
+
+          {otherExpenses.length > 0 ? (
+            <View style={styles.historySection}>
+              <Text style={styles.sectionTitle}>Expense History</Text>
+
+              {otherExpenses.map((expense) => (
+                <View key={expense.id} style={styles.historyItem}>
+                  <Text style={styles.historyTitle}>
+                    {expense.item} - {formatDateTime(expense.createdAt)}
+                  </Text>
+                  <Text style={styles.historyLine}>
+                    Cost: {expense.cost} {existingCar.currency}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
         </CollapsibleCard>
 
         <View style={styles.card}>
@@ -2440,8 +3332,391 @@ export default function App() {
           </Text>
         </Pressable>
 
-        <StatusBar style={hasGlobalWarning ? "light" : "auto"} />
+        <StatusBar style={hasDangerWarning ? "light" : "auto"} />
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function ReportBarChart({
+  rows,
+  currency,
+  emptyLabel,
+}: {
+  rows: ReportAmountRow[];
+  currency: string;
+  emptyLabel: string;
+}) {
+  const maxAmount = Math.max(...rows.map((row) => row.amount), 0);
+  const totalAmount = sumReportRows(rows);
+
+  if (rows.length === 0 || maxAmount <= 0) {
+    return <Text style={styles.cardLine}>{emptyLabel}</Text>;
+  }
+
+  return (
+    <View style={styles.reportChart}>
+      {rows.map((row) => {
+        const width =
+          row.amount > 0
+            ? (`${Math.max((row.amount / maxAmount) * 100, 4)}%` as const)
+            : "0%";
+
+        return (
+          <View key={row.key} style={styles.reportChartRow}>
+            <View style={styles.reportChartHeader}>
+              <Text style={styles.reportChartLabel}>{row.label}</Text>
+              <Text style={styles.reportChartValue}>
+                {formatMoneyWithPercent(row.amount, currency, totalAmount)}
+              </Text>
+            </View>
+            <View style={styles.reportBarTrack}>
+              <View style={[styles.reportBarFill, { width }]} />
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function buildExpenseEvents({
+  entries,
+  carWashes,
+  carInsuranceRecords,
+  vehicleInspectionRecords,
+  highwayPassRefills,
+  otherExpenses,
+}: {
+  entries: Entry[];
+  carWashes: CarWash[];
+  carInsuranceRecords: CarInsuranceRecord[];
+  vehicleInspectionRecords: VehicleInspectionRecord[];
+  highwayPassRefills: HighwayPassRefill[];
+  otherExpenses: OtherExpense[];
+}) {
+  const events: ExpenseEvent[] = [];
+
+  for (const entry of entries) {
+    if (entry.type !== "refuel" || entry.moneyPaid === null) continue;
+
+    pushExpenseEvent(events, {
+      id: `fuel_${entry.id}`,
+      section: "fuel",
+      amount: entry.moneyPaid,
+      createdAt: entry.createdAt,
+    });
+  }
+
+  for (const refill of highwayPassRefills) {
+    pushExpenseEvent(events, {
+      id: `highway_pass_${refill.id}`,
+      section: "highway_pass",
+      amount: refill.amount,
+      createdAt: refill.createdAt,
+    });
+  }
+
+  for (const carWash of carWashes) {
+    pushExpenseEvent(events, {
+      id: `car_wash_${carWash.id}`,
+      section: "car_wash",
+      amount: carWash.price,
+      createdAt: carWash.createdAt,
+    });
+  }
+
+  for (const record of carInsuranceRecords) {
+    pushExpenseEvent(events, {
+      id: `car_insurance_${record.id}`,
+      section: "car_insurance",
+      amount: record.price,
+      createdAt: record.updatedAt,
+    });
+  }
+
+  for (const record of vehicleInspectionRecords) {
+    pushExpenseEvent(events, {
+      id: `vehicle_inspection_${record.id}`,
+      section: "vehicle_inspection",
+      amount: record.cost,
+      createdAt: record.updatedAt,
+    });
+  }
+
+  for (const expense of otherExpenses) {
+    pushExpenseEvent(events, {
+      id: `other_${expense.id}`,
+      section: "other",
+      amount: expense.cost,
+      createdAt: expense.createdAt,
+    });
+  }
+
+  return events.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function pushExpenseEvent(
+  events: ExpenseEvent[],
+  event: {
+    id: string;
+    section: ExpenseSection;
+    amount: number;
+    createdAt: string;
+  },
+) {
+  if (!Number.isFinite(event.amount) || event.amount <= 0) return;
+
+  const date = new Date(event.createdAt);
+  if (Number.isNaN(date.getTime())) return;
+
+  events.push({
+    id: event.id,
+    section: event.section,
+    amount: roundTo2(event.amount),
+    createdAt: event.createdAt,
+    monthKey: getMonthKey(date),
+    yearKey: getYearKey(date),
+    dayKey: getDayKey(date),
+  });
+}
+
+function getReportDateOptions(events: ExpenseEvent[], period: ReportPeriod) {
+  const keys = new Set<string>();
+  const now = new Date();
+  keys.add(period === "monthly" ? getMonthKey(now) : getYearKey(now));
+
+  for (const event of events) {
+    keys.add(period === "monthly" ? event.monthKey : event.yearKey);
+  }
+
+  return Array.from(keys)
+    .sort((a, b) => b.localeCompare(a))
+    .map((key) => ({
+      key,
+      label: formatReportPeriodTitle(period, key),
+      amount: sumExpenses(
+        events.filter((event) => isEventInReportPeriod(event, period, key)),
+      ),
+    }));
+}
+
+function buildReportSummary(
+  events: ExpenseEvent[],
+  period: ReportPeriod,
+  periodKey: string,
+) {
+  const periodEvents = events.filter((event) =>
+    isEventInReportPeriod(event, period, periodKey),
+  );
+  const sectionRows = EXPENSE_SECTION_ORDER.map((section) => ({
+    key: section,
+    label: EXPENSE_SECTION_LABELS[section],
+    amount: sumExpenses(
+      periodEvents.filter((event) => event.section === section),
+    ),
+  }));
+
+  return {
+    total: sumExpenses(periodEvents),
+    sectionRows,
+    dateRows: buildReportDateRows(periodEvents, period, periodKey),
+  };
+}
+
+function buildReportDateRows(
+  events: ExpenseEvent[],
+  period: ReportPeriod,
+  periodKey: string,
+) {
+  if (period === "yearly") {
+    return SHORT_MONTH_NAMES.map((label, index) => {
+      const monthKey = `${periodKey}-${String(index + 1).padStart(2, "0")}`;
+
+      return {
+        key: monthKey,
+        label,
+        amount: sumExpenses(
+          events.filter((event) => event.monthKey === monthKey),
+        ),
+      };
+    });
+  }
+
+  const dayKeys = Array.from(new Set(events.map((event) => event.dayKey))).sort(
+    (a, b) => a.localeCompare(b),
+  );
+
+  return dayKeys.map((dayKey) => ({
+    key: dayKey,
+    label: formatDayKey(dayKey),
+    amount: sumExpenses(events.filter((event) => event.dayKey === dayKey)),
+  }));
+}
+
+function isEventInReportPeriod(
+  event: ExpenseEvent,
+  period: ReportPeriod,
+  periodKey: string,
+) {
+  return period === "monthly"
+    ? event.monthKey === periodKey
+    : event.yearKey === periodKey;
+}
+
+function sumExpenses(events: ExpenseEvent[]) {
+  return roundTo2(events.reduce((sum, event) => sum + event.amount, 0));
+}
+
+function sumReportRows(rows: ReportAmountRow[]) {
+  return roundTo2(rows.reduce((sum, row) => sum + row.amount, 0));
+}
+
+function formatMoney(amount: number, currency: string) {
+  return `${roundTo2(amount)} ${currency}`.trim();
+}
+
+function formatMoneyWithPercent(amount: number, currency: string, total: number) {
+  return `${formatMoney(amount, currency)} (${formatPercentOfTotal(
+    amount,
+    total,
+  )})`;
+}
+
+function formatPercentOfTotal(amount: number, total: number) {
+  if (total <= 0) return "0%";
+  return `${roundTo2((amount / total) * 100)}%`;
+}
+
+function formatReportPeriodTitle(period: ReportPeriod, key: string | null) {
+  if (!key) return "Selected period";
+
+  if (period === "yearly") {
+    return key;
+  }
+
+  const [year, month] = key.split("-");
+  const monthIndex = Number(month) - 1;
+  const monthLabel = MONTH_NAMES[monthIndex] ?? month;
+  return `${monthLabel} ${year}`;
+}
+
+function formatDayKey(dayKey: string) {
+  const [, month, day] = dayKey.split("-");
+  const monthIndex = Number(month) - 1;
+  const monthLabel = SHORT_MONTH_NAMES[monthIndex] ?? month;
+  return `${monthLabel} ${Number(day)}`;
+}
+
+function normalizeDateInput(value: string) {
+  const date = parseDateInput(value);
+  if (!date) return null;
+  return formatDateInput(date);
+}
+
+function parseDateInput(value: string | null) {
+  if (!value) return null;
+
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function formatDateInput(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatDateForDisplay(value: string) {
+  const date = parseDateInput(value);
+  if (!date) return "Not set";
+  return date.toLocaleDateString();
+}
+
+function getDueDateStatus(value: string | null): DueDateStatus {
+  const dueDate = parseDateInput(value);
+  if (!dueDate) return "none";
+
+  const today = startOfLocalDay(new Date());
+  const due = startOfLocalDay(dueDate);
+  const daysUntilDue = Math.floor(
+    (due.getTime() - today.getTime()) / (24 * 60 * 60 * 1000),
+  );
+
+  if (daysUntilDue <= 0) return "due";
+  if (daysUntilDue <= 7) return "upcoming";
+  return "none";
+}
+
+function getDueDateWarningMessage(
+  label: string,
+  value: string | null,
+  status: DueDateStatus,
+) {
+  if (status === "none") return null;
+
+  const dueDate = value ? formatDateForDisplay(value) : "the saved due date";
+
+  if (status === "due") {
+    return `${label} is due or overdue as of ${dueDate}. Update its next due date to clear this warning.`;
+  }
+
+  return `${label} is due within one week on ${dueDate}.`;
+}
+
+function formatDueDateStatus(status: DueDateStatus) {
+  if (status === "due") return "Due now";
+  if (status === "upcoming") return "Due within 7 days";
+  return "Not due soon";
+}
+
+function getEngineOilUpcomingThreshold(distanceUnit: DistanceUnit) {
+  if (distanceUnit === "miles") {
+    return roundTo2(ENGINE_OIL_UPCOMING_THRESHOLD_KM * KM_TO_MILES);
+  }
+
+  return ENGINE_OIL_UPCOMING_THRESHOLD_KM;
+}
+
+function formatEngineOilThreshold(distanceUnit: DistanceUnit) {
+  const threshold = getEngineOilUpcomingThreshold(distanceUnit);
+  return `${threshold} ${formatDistanceUnitLabel(distanceUnit)}`;
+}
+
+function getEngineOilDueSoonMessage(distanceUnit: DistanceUnit) {
+  return `Engine oil change is due within ${formatEngineOilThreshold(
+    distanceUnit,
+  )}.`;
+}
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function getYearKey(date: Date) {
+  return String(date.getFullYear());
+}
+
+function getMonthKey(date: Date) {
+  return `${getYearKey(date)}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getDayKey(date: Date) {
+  return `${getMonthKey(date)}-${String(date.getDate()).padStart(2, "0")}`;
 }

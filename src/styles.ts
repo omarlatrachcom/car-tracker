@@ -8,8 +8,14 @@ export const styles = StyleSheet.create({
   safeAreaWarning: {
     backgroundColor: "#b42318",
   },
+  safeAreaCaution: {
+    backgroundColor: "#facc15",
+  },
   warningBackground: {
     backgroundColor: "#b42318",
+  },
+  cautionBackground: {
+    backgroundColor: "#facc15",
   },
   centeredContainer: {
     flex: 1,
@@ -29,6 +35,9 @@ export const styles = StyleSheet.create({
   containerWarning: {
     backgroundColor: "#b42318",
   },
+  containerCaution: {
+    backgroundColor: "#facc15",
+  },
   title: {
     fontSize: 28,
     fontWeight: "700",
@@ -37,6 +46,9 @@ export const styles = StyleSheet.create({
   titleOnWarning: {
     color: "#fff",
   },
+  titleOnCaution: {
+    color: "#111",
+  },
   subtitle: {
     fontSize: 16,
     color: "#555",
@@ -44,6 +56,22 @@ export const styles = StyleSheet.create({
   },
   subtitleOnWarning: {
     color: "#ffe7e5",
+  },
+  subtitleOnCaution: {
+    color: "#3f3100",
+  },
+  backButton: {
+    alignSelf: "flex-start",
+    backgroundColor: "#e5e5e5",
+    borderRadius: 10,
+    marginBottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  backButtonText: {
+    color: "#111",
+    fontSize: 15,
+    fontWeight: "700",
   },
   globalWarningBanner: {
     backgroundColor: "#7a1c16",
@@ -58,6 +86,13 @@ export const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",
+  },
+  globalCautionBanner: {
+    backgroundColor: "#fff7cc",
+    borderColor: "#854d0e",
+  },
+  globalCautionText: {
+    color: "#3f3100",
   },
   sectionTitle: {
     fontSize: 18,
@@ -217,6 +252,10 @@ export const styles = StyleSheet.create({
     color: "#b42318",
     fontWeight: "700",
   },
+  upcomingStatusText: {
+    color: "#a16207",
+    fontWeight: "700",
+  },
   okStatusText: {
     color: "#047857",
     fontWeight: "700",
@@ -257,6 +296,101 @@ export const styles = StyleSheet.create({
   },
   historySection: {
     marginTop: 8,
+  },
+  reportListButton: {
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderColor: "#d0d0d0",
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 50,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  reportListButtonText: {
+    color: "#111",
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  reportListButtonValue: {
+    color: "#444",
+    fontSize: 15,
+    fontWeight: "600",
+    marginLeft: 12,
+  },
+  reportTotalCard: {
+    backgroundColor: "#111",
+    borderRadius: 12,
+    marginBottom: 16,
+    padding: 18,
+  },
+  reportTotalLabel: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  reportTotalValue: {
+    color: "#fff",
+    fontSize: 32,
+    fontWeight: "800",
+  },
+  reportSummaryRow: {
+    alignItems: "center",
+    borderTopColor: "#ececec",
+    borderTopWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+  },
+  reportSummaryLabel: {
+    color: "#222",
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  reportSummaryValue: {
+    color: "#111",
+    fontSize: 16,
+    fontWeight: "700",
+    marginLeft: 12,
+  },
+  reportChart: {
+    gap: 14,
+  },
+  reportChartRow: {
+    gap: 8,
+  },
+  reportChartHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  reportChartLabel: {
+    color: "#222",
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  reportChartValue: {
+    color: "#444",
+    fontSize: 14,
+    fontWeight: "600",
+    marginLeft: 12,
+  },
+  reportBarTrack: {
+    backgroundColor: "#eef2f7",
+    borderRadius: 8,
+    height: 12,
+    overflow: "hidden",
+  },
+  reportBarFill: {
+    backgroundColor: "#1f6feb",
+    borderRadius: 8,
+    height: "100%",
   },
   primaryButton: {
     backgroundColor: "#111",
