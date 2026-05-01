@@ -54,6 +54,7 @@ import type {
   HighwayPass,
   HighwayPassRefill,
   HighwayPassTravelFee,
+  LocationPlace,
   LocationLookupTarget,
   OtherExpense,
   RefuelIntervalMetric,
@@ -103,14 +104,61 @@ type ExpenseSection =
   | "other";
 type WarningSeverity = "caution" | "danger";
 type DueDateStatus = "none" | "upcoming" | "due";
+type LocationTarget = NonNullable<LocationLookupTarget>;
 
 const ENGINE_OIL_UPCOMING_THRESHOLD_KM = 100;
 const KM_TO_MILES = 0.621371;
+const LOCATION_NAME_TOLERANCE_METERS = 250;
+
+type GpsLocation = {
+  latitude: number;
+  longitude: number;
+  inferredName: string;
+};
+
+type LocationDraft = GpsLocation & {
+  locationId: string | null;
+};
+
+type LocationDrafts = Record<LocationTarget, LocationDraft | null>;
+
+type ResolvedLocation = {
+  name: string | null;
+  locationId: string | null;
+  locations: LocationPlace[];
+};
+
+const EMPTY_LOCATION_DRAFTS: LocationDrafts = {
+  reading: null,
+  refuel: null,
+  car_wash: null,
+  highway_pass_travel_fee: null,
+};
 
 type ExpenseEvent = {
   id: string;
   section: ExpenseSection;
+  item: string | null;
   amount: number;
+  createdAt: string;
+  monthKey: string;
+  yearKey: string;
+  dayKey: string;
+};
+
+type DistanceEvent = {
+  id: string;
+  distance: number;
+  createdAt: string;
+  monthKey: string;
+  yearKey: string;
+  dayKey: string;
+};
+
+type FuelEvent = {
+  id: string;
+  volumeFilled: number;
+  moneyPaid: number | null;
   createdAt: string;
   monthKey: string;
   yearKey: string;
@@ -121,6 +169,12 @@ type ReportAmountRow = {
   key: string;
   label: string;
   amount: number;
+};
+
+type ReportDistanceRow = {
+  key: string;
+  label: string;
+  distance: number;
 };
 
 const EXPENSE_SECTION_LABELS: Record<ExpenseSection, string> = {
@@ -171,6 +225,16 @@ const SHORT_MONTH_NAMES = [
   "Dec",
 ];
 
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
 export default function App() {
   const [appData, setAppData] = useState<AppData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -178,6 +242,9 @@ export default function App() {
   const [isDriveSyncing, setIsDriveSyncing] = useState(false);
   const [locationLookupTarget, setLocationLookupTarget] =
     useState<LocationLookupTarget>(null);
+  const [locationDrafts, setLocationDrafts] = useState<LocationDrafts>(
+    EMPTY_LOCATION_DRAFTS,
+  );
   const [driveUser, setDriveUser] = useState<GoogleDriveUser | null>(null);
   const [globalWarningMessage, setGlobalWarningMessage] = useState<
     string | null
@@ -189,6 +256,8 @@ export default function App() {
   const [selectedReportPeriodKey, setSelectedReportPeriodKey] = useState<
     string | null
   >(null);
+  const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
+  const [isCreatingCar, setIsCreatingCar] = useState(false);
 
   const [name, setName] = useState("");
   const [fuelType, setFuelType] = useState("");
@@ -228,6 +297,8 @@ export default function App() {
   const [vehicleInspectionDueDate, setVehicleInspectionDueDate] = useState("");
   const [vehicleInspectionCost, setVehicleInspectionCost] = useState("");
   const [otherExpenseItem, setOtherExpenseItem] = useState("");
+  const [isOtherExpenseItemFocused, setIsOtherExpenseItemFocused] =
+    useState(false);
   const [otherExpenseCost, setOtherExpenseCost] = useState("");
   const [engineOilNextDueOdometerInput, setEngineOilNextDueOdometerInput] =
     useState("");
@@ -530,7 +601,51 @@ export default function App() {
     await downloadMergeAndResync(appData, true);
   }
 
-  const existingCar = appData?.cars[0] ?? null;
+  const availableCars = useMemo(() => {
+    if (!appData) return [] as Car[];
+    return [...appData.cars].sort((a, b) => a.name.localeCompare(b.name));
+  }, [appData]);
+
+  const existingCar = useMemo(() => {
+    if (!appData || !selectedCarId) return null;
+    return appData.cars.find((car) => car.id === selectedCarId) ?? null;
+  }, [appData, selectedCarId]);
+
+  useEffect(() => {
+    if (
+      selectedCarId &&
+      appData &&
+      !appData.cars.some((car) => car.id === selectedCarId)
+    ) {
+      setSelectedCarId(null);
+      setIsCreatingCar(false);
+    }
+  }, [appData, selectedCarId]);
+
+  const carLocationPlaces = useMemo(() => {
+    if (!appData || !existingCar) return [] as LocationPlace[];
+    return appData.locations.filter(
+      (location) => location.carId === existingCar.id,
+    );
+  }, [appData, existingCar]);
+
+  const locationNameById = useMemo(() => {
+    const locationNames = new Map<string, string>();
+
+    for (const location of carLocationPlaces) {
+      locationNames.set(location.id, location.name);
+    }
+
+    return locationNames;
+  }, [carLocationPlaces]);
+
+  function getSavedLocationName(
+    locationId: string | null | undefined,
+    fallback: string | null,
+  ) {
+    if (!locationId) return fallback;
+    return locationNameById.get(locationId) ?? fallback;
+  }
 
   const carEntries = useMemo(() => {
     if (!appData || !existingCar) return [];
@@ -602,6 +717,18 @@ export default function App() {
     () =>
       roundTo2(otherExpenses.reduce((sum, expense) => sum + expense.cost, 0)),
     [otherExpenses],
+  );
+  const otherExpenseItemOptions = useMemo(
+    () => buildOtherExpenseItemOptions(otherExpenses),
+    [otherExpenses],
+  );
+  const filteredOtherExpenseItemOptions = useMemo(
+    () =>
+      filterOtherExpenseItemOptions(
+        otherExpenseItemOptions,
+        otherExpenseItem,
+      ),
+    [otherExpenseItem, otherExpenseItemOptions],
   );
 
   const highwayPasses = useMemo(() => {
@@ -709,14 +836,18 @@ export default function App() {
       id: fee.id,
       type: "travel_fee" as const,
       amount: fee.amount,
-      location: fee.location,
+      location: getSavedLocationName(fee.locationId, fee.location),
       createdAt: fee.createdAt,
     }));
 
     return [...refillHistory, ...travelFeeHistory].sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt),
     );
-  }, [selectedHighwayPassRefills, selectedHighwayPassTravelFees]);
+  }, [
+    locationNameById,
+    selectedHighwayPassRefills,
+    selectedHighwayPassTravelFees,
+  ]);
 
   const reportExpenseEvents = useMemo(
     () =>
@@ -738,19 +869,47 @@ export default function App() {
     ],
   );
 
+  const reportDistanceEvents = useMemo(
+    () => buildDistanceEvents(carEntries),
+    [carEntries],
+  );
+
+  const reportFuelEvents = useMemo(
+    () => buildFuelEvents(carEntries),
+    [carEntries],
+  );
+
   const reportDateOptions = useMemo(() => {
     if (!reportPeriod) return [] as ReportAmountRow[];
-    return getReportDateOptions(reportExpenseEvents, reportPeriod);
-  }, [reportExpenseEvents, reportPeriod]);
+    return getReportDateOptions(
+      reportExpenseEvents,
+      reportDistanceEvents,
+      reportFuelEvents,
+      reportPeriod,
+    );
+  }, [
+    reportExpenseEvents,
+    reportDistanceEvents,
+    reportFuelEvents,
+    reportPeriod,
+  ]);
 
   const reportSummary = useMemo(() => {
     if (!reportPeriod || !selectedReportPeriodKey) return null;
     return buildReportSummary(
       reportExpenseEvents,
+      reportDistanceEvents,
+      reportFuelEvents,
       reportPeriod,
       selectedReportPeriodKey,
     );
-  }, [reportExpenseEvents, reportPeriod, selectedReportPeriodKey]);
+  }, [
+    reportExpenseEvents,
+    reportDistanceEvents,
+    reportFuelEvents,
+    reportPeriod,
+    selectedReportPeriodKey,
+  ]);
 
   const isEngineOilChangeOverdue = useMemo(() => {
     if (
@@ -1010,19 +1169,13 @@ export default function App() {
     const nextData = normalizeAppData({
       ...appData,
       updatedAt: now,
-      cars: [newCar],
-      entries: [],
-      carWashes: [],
-      carInsuranceRecords: [],
-      vehicleInspectionRecords: [],
-      otherExpenses: [],
-      highwayPasses: [],
-      highwayPassRefills: [],
-      highwayPassTravelFees: [],
+      cars: [newCar, ...appData.cars],
     });
 
     await saveAppData(nextData);
 
+    setSelectedCarId(newCar.id);
+    setIsCreatingCar(false);
     setName("");
     setFuelType("");
     setDistanceUnit("km");
@@ -1036,12 +1189,16 @@ export default function App() {
     setHighwayPassRefillAmount("");
     setHighwayPassTravelFeeAmount("");
     setHighwayPassTravelFeeLocation("");
+    setCarWashPrice("");
+    setCarWashLocation("");
     setCarInsuranceDueDate("");
     setCarInsurancePrice("");
     setVehicleInspectionDueDate("");
     setVehicleInspectionCost("");
     setOtherExpenseItem("");
+    setIsOtherExpenseItemFocused(false);
     setOtherExpenseCost("");
+    setEngineOilNextDueOdometerInput("");
   }
 
   function openReadingForm() {
@@ -1049,6 +1206,7 @@ export default function App() {
     setReadingOdometer(latestEntry ? String(latestEntry.odometer) : "");
     setReadingTankState(latestEntry ? String(latestEntry.tankState) : "");
     setReadingLocation("");
+    clearLocationDraft("reading");
   }
 
   function openRefuelForm() {
@@ -1067,6 +1225,7 @@ export default function App() {
     setRefuelMoneyPaid("");
     setRefuelLocation("");
     setHighwayPassTravelFeeLocation("");
+    clearLocationDraft("refuel");
   }
 
   function closeForms() {
@@ -1079,6 +1238,7 @@ export default function App() {
     setRefuelPricePerUnit("");
     setRefuelMoneyPaid("");
     setRefuelLocation("");
+    setLocationDrafts(EMPTY_LOCATION_DRAFTS);
   }
 
   function openHighwayPassForm(form: Exclude<HighwayPassForm, "none">) {
@@ -1089,6 +1249,7 @@ export default function App() {
     } else {
       setHighwayPassTravelFeeAmount("");
       setHighwayPassTravelFeeLocation("");
+      clearLocationDraft("highway_pass_travel_fee");
     }
 
     setActiveHighwayPassForm(form);
@@ -1100,6 +1261,41 @@ export default function App() {
     setHighwayPassRefillAmount("");
     setHighwayPassTravelFeeAmount("");
     setHighwayPassTravelFeeLocation("");
+    clearLocationDraft("highway_pass_travel_fee");
+  }
+
+  function openCreateCarForm() {
+    setName("");
+    setFuelType("");
+    setDistanceUnit("km");
+    setCurrency("");
+    setFuelVolumeUnit("liters");
+    setTankCapacity("");
+    setFuelStateMode("percent");
+    setIsCreatingCar(true);
+    setSelectedCarId(null);
+    closeForms();
+    closeHighwayPassForm();
+  }
+
+  function handleSelectCar(carId: string) {
+    setSelectedCarId(carId);
+    setIsCreatingCar(false);
+    setReportStep("home");
+    setReportPeriod(null);
+    setSelectedReportPeriodKey(null);
+    closeForms();
+    closeHighwayPassForm();
+  }
+
+  function openCarPicker() {
+    setSelectedCarId(null);
+    setIsCreatingCar(false);
+    setReportStep("home");
+    setReportPeriod(null);
+    setSelectedReportPeriodKey(null);
+    closeForms();
+    closeHighwayPassForm();
   }
 
   function openReportFlow() {
@@ -1136,15 +1332,37 @@ export default function App() {
     setReportStep("summary");
   }
 
-  async function handleUseCurrentLocation(
-    target: NonNullable<LocationLookupTarget>,
+  function setLocationDraftForTarget(
+    target: LocationTarget,
+    draft: LocationDraft | null,
   ) {
+    setLocationDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [target]: draft,
+    }));
+  }
+
+  function clearLocationDraft(target: LocationTarget) {
+    setLocationDraftForTarget(target, null);
+  }
+
+  async function handleUseCurrentLocation(target: LocationTarget) {
     setLocationLookupTarget(target);
 
     try {
-      const locationText = await getCurrentLocationText({ showAlerts: true });
+      const gpsLocation = await getCurrentLocation({ showAlerts: true });
 
-      if (!locationText) return;
+      if (!gpsLocation) return;
+
+      const matchingLocation = findMatchingLocation(
+        gpsLocation,
+        carLocationPlaces,
+      );
+      const locationText = matchingLocation?.name ?? gpsLocation.inferredName;
+      setLocationDraftForTarget(target, {
+        ...gpsLocation,
+        locationId: matchingLocation?.id ?? null,
+      });
 
       if (target === "reading") {
         setReadingLocation(locationText);
@@ -1161,22 +1379,68 @@ export default function App() {
   }
 
   async function resolveLocationForSave(
-    target: NonNullable<LocationLookupTarget>,
+    target: LocationTarget,
     value: string,
-  ) {
+  ): Promise<ResolvedLocation> {
     const trimmedLocation = value.trim();
-    if (trimmedLocation) return trimmedLocation;
+    const existingLocations = appData?.locations ?? [];
+    const draft = locationDrafts[target];
+
+    if (draft && existingCar) {
+      return resolveGpsLocationForSave(
+        draft,
+        trimmedLocation,
+        existingLocations,
+        existingCar.id,
+      );
+    }
+
+    if (trimmedLocation) {
+      return {
+        name: trimmedLocation,
+        locationId: null,
+        locations: existingLocations,
+      };
+    }
 
     setLocationLookupTarget(target);
 
     try {
-      return await getCurrentLocationText({ showAlerts: false });
+      const gpsLocation = await getCurrentLocation({ showAlerts: false });
+
+      if (!gpsLocation || !existingCar) {
+        return {
+          name: null,
+          locationId: null,
+          locations: existingLocations,
+        };
+      }
+
+      const matchingLocation = findMatchingLocation(
+        gpsLocation,
+        carLocationPlaces,
+      );
+      const gpsDraft: LocationDraft = {
+        ...gpsLocation,
+        locationId: matchingLocation?.id ?? null,
+      };
+
+      setLocationDraftForTarget(target, gpsDraft);
+
+      return resolveGpsLocationForSave(
+        gpsDraft,
+        "",
+        existingLocations,
+        existingCar.id,
+      );
     } finally {
       setLocationLookupTarget(null);
     }
   }
 
-  async function getCurrentLocationText(options: { showAlerts: boolean }) {
+  async function getCurrentLocation(
+    options: { showAlerts: boolean },
+  ): Promise<GpsLocation | null> {
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
 
@@ -1216,12 +1480,17 @@ export default function App() {
         console.warn("Reverse geocoding failed:", error);
       }
 
-      return (
+      const inferredName =
         formatGeocodedLocation(address) ??
         `${roundTo4(position.coords.latitude)}, ${roundTo4(
           position.coords.longitude,
-        )}`
-      );
+        )}`;
+
+      return {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        inferredName,
+      };
     } catch (error) {
       console.error("Location lookup failed:", error);
 
@@ -1261,7 +1530,10 @@ export default function App() {
     const distanceSinceLastEntry = latestEntry
       ? roundTo2(odometer - latestEntry.odometer)
       : null;
-    const location = await resolveLocationForSave("reading", readingLocation);
+    const resolvedLocation = await resolveLocationForSave(
+      "reading",
+      readingLocation,
+    );
 
     const now = new Date().toISOString();
 
@@ -1275,7 +1547,8 @@ export default function App() {
       amountAdded: null,
       pricePerUnit: null,
       moneyPaid: null,
-      location,
+      location: resolvedLocation.name,
+      locationId: resolvedLocation.locationId,
       createdAt: now,
       updatedAt: now,
     };
@@ -1286,10 +1559,12 @@ export default function App() {
       cars: appData.cars.map((car) =>
         car.id === existingCar.id ? { ...car, updatedAt: now } : car,
       ),
+      locations: resolvedLocation.locations,
       entries: [newEntry, ...appData.entries],
     });
 
     await saveAppData(nextData);
+    clearLocationDraft("reading");
     closeForms();
   }
 
@@ -1345,7 +1620,10 @@ export default function App() {
     );
 
     const distanceSinceLastEntry = roundTo2(odometer - latestEntry.odometer);
-    const location = await resolveLocationForSave("refuel", refuelLocation);
+    const resolvedLocation = await resolveLocationForSave(
+      "refuel",
+      refuelLocation,
+    );
 
     const now = new Date().toISOString();
 
@@ -1359,7 +1637,8 @@ export default function App() {
       amountAdded: amount,
       pricePerUnit: refuelResolution.pricePerUnit,
       moneyPaid: refuelResolution.moneyPaid,
-      location,
+      location: resolvedLocation.name,
+      locationId: resolvedLocation.locationId,
       createdAt: now,
       updatedAt: now,
     };
@@ -1370,10 +1649,12 @@ export default function App() {
       cars: appData.cars.map((car) =>
         car.id === existingCar.id ? { ...car, updatedAt: now } : car,
       ),
+      locations: resolvedLocation.locations,
       entries: [newEntry, ...appData.entries],
     });
 
     await saveAppData(nextData);
+    clearLocationDraft("refuel");
     closeForms();
   }
 
@@ -1515,7 +1796,7 @@ export default function App() {
       return;
     }
 
-    const location = await resolveLocationForSave(
+    const resolvedLocation = await resolveLocationForSave(
       "car_wash",
       carWashLocation,
     );
@@ -1525,7 +1806,8 @@ export default function App() {
       id: createId("car_wash"),
       carId: existingCar.id,
       price,
-      location,
+      location: resolvedLocation.name,
+      locationId: resolvedLocation.locationId,
       createdAt: now,
       updatedAt: now,
     };
@@ -1536,12 +1818,14 @@ export default function App() {
       cars: appData.cars.map((car) =>
         car.id === existingCar.id ? { ...car, updatedAt: now } : car,
       ),
+      locations: resolvedLocation.locations,
       carWashes: [newCarWash, ...appData.carWashes],
     });
 
     await saveAppData(nextData);
     setCarWashPrice("");
     setCarWashLocation("");
+    clearLocationDraft("car_wash");
   }
 
   async function handleSaveOtherExpense() {
@@ -1582,6 +1866,7 @@ export default function App() {
 
     await saveAppData(nextData);
     setOtherExpenseItem("");
+    setIsOtherExpenseItemFocused(false);
     setOtherExpenseCost("");
   }
 
@@ -1706,12 +1991,12 @@ export default function App() {
       return;
     }
 
-    const location = await resolveLocationForSave(
+    const resolvedLocation = await resolveLocationForSave(
       "highway_pass_travel_fee",
       highwayPassTravelFeeLocation,
     );
 
-    if (!location) {
+    if (!resolvedLocation.name) {
       Alert.alert(
         "Validation error",
         "Please enter a travel fee location or use GPS.",
@@ -1726,7 +2011,8 @@ export default function App() {
       carId: existingCar.id,
       highwayPassId: selectedHighwayPass.id,
       amount,
-      location,
+      location: resolvedLocation.name,
+      locationId: resolvedLocation.locationId,
       createdAt: now,
       updatedAt: now,
     };
@@ -1737,6 +2023,7 @@ export default function App() {
       cars: appData.cars.map((car) =>
         car.id === existingCar.id ? { ...car, updatedAt: now } : car,
       ),
+      locations: resolvedLocation.locations,
       highwayPassTravelFees: [
         newTravelFee,
         ...appData.highwayPassTravelFees,
@@ -1746,6 +2033,7 @@ export default function App() {
     await saveAppData(nextData);
     setHighwayPassTravelFeeAmount("");
     setHighwayPassTravelFeeLocation("");
+    clearLocationDraft("highway_pass_travel_fee");
     setActiveHighwayPassForm("none");
   }
 
@@ -1753,45 +2041,266 @@ export default function App() {
     if (!appData) return;
 
     Alert.alert(
-      "Delete local data",
-      "This will clear the car and all history. If Google Drive is connected, the empty dataset will be synced too. Continue?",
+      "Reset all data",
+      "This will erase every car and all saved history. Continue?",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Delete",
+          text: "Continue",
           style: "destructive",
-          onPress: async () => {
-            const now = new Date().toISOString();
-
-            const emptiedData = normalizeAppData({
-              ...createEmptyAppData(),
-              updatedAt: now,
-              sync: {
-                ...appData.sync,
-                datasetResetAt: now,
-                lastSyncError: null,
-                lastSyncSource: "local",
-              },
-            });
-
-            await saveAppData(emptiedData);
-            closeForms();
-            setNewHighwayPassNumber("");
-            setSelectedHighwayPassId(null);
-            setActiveHighwayPassForm("none");
-            setHighwayPassRefillAmount("");
-            setHighwayPassTravelFeeAmount("");
-            setHighwayPassTravelFeeLocation("");
-            setCarInsuranceDueDate("");
-            setCarInsurancePrice("");
-            setVehicleInspectionDueDate("");
-            setVehicleInspectionCost("");
-            setOtherExpenseItem("");
-            setOtherExpenseCost("");
-          },
+          onPress: confirmDeleteAllLocalData,
         },
       ],
     );
+  }
+
+  function confirmDeleteAllLocalData() {
+    Alert.alert(
+      "Final confirmation",
+      "This cannot be undone. Reset all car-tracker data now?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset Everything",
+          style: "destructive",
+          onPress: resetAllLocalData,
+        },
+      ],
+    );
+  }
+
+  async function resetAllLocalData() {
+    if (!appData) return;
+
+    const now = new Date().toISOString();
+
+    const emptiedData = normalizeAppData({
+      ...createEmptyAppData(),
+      updatedAt: now,
+      sync: {
+        ...appData.sync,
+        datasetResetAt: now,
+        lastSyncError: null,
+        lastSyncSource: "local",
+      },
+    });
+
+    await saveAppData(emptiedData);
+    setSelectedCarId(null);
+    setIsCreatingCar(false);
+    closeForms();
+    setNewHighwayPassNumber("");
+    setSelectedHighwayPassId(null);
+    setActiveHighwayPassForm("none");
+    setHighwayPassRefillAmount("");
+    setHighwayPassTravelFeeAmount("");
+    setHighwayPassTravelFeeLocation("");
+    setCarInsuranceDueDate("");
+    setCarInsurancePrice("");
+    setVehicleInspectionDueDate("");
+    setVehicleInspectionCost("");
+    setOtherExpenseItem("");
+    setIsOtherExpenseItemFocused(false);
+    setOtherExpenseCost("");
+  }
+
+  function handleResetSelectedCarData() {
+    if (!existingCar) return;
+
+    Alert.alert(
+      "Reset car data",
+      `This will erase saved history and expenses for ${existingCar.name}, but keep the car profile. Continue?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: confirmResetSelectedCarData,
+        },
+      ],
+    );
+  }
+
+  function confirmResetSelectedCarData() {
+    if (!existingCar) return;
+
+    Alert.alert(
+      "Final confirmation",
+      `This cannot be undone. Reset data for ${existingCar.name} now?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset Car Data",
+          style: "destructive",
+          onPress: resetSelectedCarData,
+        },
+      ],
+    );
+  }
+
+  async function resetSelectedCarData() {
+    if (!appData || !existingCar) return;
+
+    const now = new Date().toISOString();
+    const carId = existingCar.id;
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.map((car) =>
+        car.id === carId
+          ? {
+              ...car,
+              engineOilNextDueOdometer: null,
+              engineOilReminderUpdatedAt: null,
+              updatedAt: now,
+            }
+          : car,
+      ),
+      entries: appData.entries.filter((entry) => entry.carId !== carId),
+      carWashes: appData.carWashes.filter(
+        (carWash) => carWash.carId !== carId,
+      ),
+      carInsuranceRecords: appData.carInsuranceRecords.filter(
+        (record) => record.carId !== carId,
+      ),
+      vehicleInspectionRecords: appData.vehicleInspectionRecords.filter(
+        (record) => record.carId !== carId,
+      ),
+      otherExpenses: appData.otherExpenses.filter(
+        (expense) => expense.carId !== carId,
+      ),
+      locations: appData.locations.filter(
+        (location) => location.carId !== carId,
+      ),
+      highwayPasses: appData.highwayPasses.filter(
+        (pass) => pass.carId !== carId,
+      ),
+      highwayPassRefills: appData.highwayPassRefills.filter(
+        (refill) => refill.carId !== carId,
+      ),
+      highwayPassTravelFees: appData.highwayPassTravelFees.filter(
+        (fee) => fee.carId !== carId,
+      ),
+      sync: {
+        ...appData.sync,
+        carDataResetAtByCarId: {
+          ...appData.sync.carDataResetAtByCarId,
+          [carId]: now,
+        },
+      },
+    });
+
+    await saveAppData(nextData);
+    closeForms();
+    closeHighwayPassForm();
+    setSelectedHighwayPassId(null);
+    setCarWashPrice("");
+    setCarWashLocation("");
+    setCarInsuranceDueDate("");
+    setCarInsurancePrice("");
+    setVehicleInspectionDueDate("");
+    setVehicleInspectionCost("");
+    setOtherExpenseItem("");
+    setIsOtherExpenseItemFocused(false);
+    setOtherExpenseCost("");
+    setEngineOilNextDueOdometerInput("");
+  }
+
+  function handleDeleteSelectedCar() {
+    if (!existingCar) return;
+
+    Alert.alert(
+      "Erase car",
+      `This will erase ${existingCar.name} and all of its saved data. Continue?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: confirmDeleteSelectedCar,
+        },
+      ],
+    );
+  }
+
+  function confirmDeleteSelectedCar() {
+    if (!existingCar) return;
+
+    Alert.alert(
+      "Final confirmation",
+      `This cannot be undone. Erase ${existingCar.name} from the app now?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Erase Car",
+          style: "destructive",
+          onPress: deleteSelectedCar,
+        },
+      ],
+    );
+  }
+
+  async function deleteSelectedCar() {
+    if (!appData || !existingCar) return;
+
+    const now = new Date().toISOString();
+    const carId = existingCar.id;
+
+    const nextData = normalizeAppData({
+      ...appData,
+      updatedAt: now,
+      cars: appData.cars.filter((car) => car.id !== carId),
+      entries: appData.entries.filter((entry) => entry.carId !== carId),
+      carWashes: appData.carWashes.filter(
+        (carWash) => carWash.carId !== carId,
+      ),
+      carInsuranceRecords: appData.carInsuranceRecords.filter(
+        (record) => record.carId !== carId,
+      ),
+      vehicleInspectionRecords: appData.vehicleInspectionRecords.filter(
+        (record) => record.carId !== carId,
+      ),
+      otherExpenses: appData.otherExpenses.filter(
+        (expense) => expense.carId !== carId,
+      ),
+      locations: appData.locations.filter(
+        (location) => location.carId !== carId,
+      ),
+      highwayPasses: appData.highwayPasses.filter(
+        (pass) => pass.carId !== carId,
+      ),
+      highwayPassRefills: appData.highwayPassRefills.filter(
+        (refill) => refill.carId !== carId,
+      ),
+      highwayPassTravelFees: appData.highwayPassTravelFees.filter(
+        (fee) => fee.carId !== carId,
+      ),
+      sync: {
+        ...appData.sync,
+        carDeletedAtByCarId: {
+          ...appData.sync.carDeletedAtByCarId,
+          [carId]: now,
+        },
+      },
+    });
+
+    await saveAppData(nextData);
+    setSelectedCarId(null);
+    setIsCreatingCar(false);
+    closeForms();
+    closeHighwayPassForm();
+    setSelectedHighwayPassId(null);
+    setCarWashPrice("");
+    setCarWashLocation("");
+    setCarInsuranceDueDate("");
+    setCarInsurancePrice("");
+    setVehicleInspectionDueDate("");
+    setVehicleInspectionCost("");
+    setOtherExpenseItem("");
+    setIsOtherExpenseItemFocused(false);
+    setOtherExpenseCost("");
+    setEngineOilNextDueOdometerInput("");
   }
 
   if (isLoading || !appData) {
@@ -1806,6 +2315,83 @@ export default function App() {
     );
   }
 
+  if (!existingCar && !isCreatingCar) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.title}>Cars</Text>
+          <Text style={styles.subtitle}>
+            Choose a car to manage, or add another car to track separately.
+          </Text>
+
+          <SyncCard
+            driveUser={driveUser}
+            sync={appData.sync}
+            statusLabel={driveUser ? "Connected" : "Not connected"}
+            initiallyCollapsed
+            isSaving={isSaving}
+            isDriveSyncing={isDriveSyncing}
+            onConnect={handleConnectGoogleDrive}
+            onSyncNow={handleSyncNow}
+            onDisconnect={handleDisconnectGoogleDrive}
+          />
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Available Cars</Text>
+            {availableCars.length === 0 ? (
+              <Text style={styles.cardLine}>No cars added yet.</Text>
+            ) : (
+              <View style={styles.stackedOptions}>
+                {availableCars.map((car) => (
+                  <Pressable
+                    key={car.id}
+                    style={styles.reportListButton}
+                    onPress={() => handleSelectCar(car.id)}
+                  >
+                    <Text style={styles.reportListButtonText}>{car.name}</Text>
+                    <Text style={styles.reportListButtonValue}>
+                      {formatDistanceUnitLabel(car.distanceUnit)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+
+          <Pressable
+            style={[
+              styles.primaryButton,
+              (isSaving || isDriveSyncing) && styles.buttonDisabled,
+            ]}
+            onPress={openCreateCarForm}
+            disabled={isSaving || isDriveSyncing}
+          >
+            <Text style={styles.primaryButtonText}>Add New Car</Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.dangerButton,
+              styles.bottomDangerButton,
+              (isSaving || isDriveSyncing) && styles.buttonDisabled,
+            ]}
+            onPress={handleDeleteAllLocalData}
+            disabled={isSaving || isDriveSyncing}
+          >
+            <Text style={styles.dangerButtonText}>
+              {isSaving || isDriveSyncing ? "Working..." : "Reset All Data"}
+            </Text>
+          </Pressable>
+
+          <StatusBar style="auto" />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   if (!existingCar) {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -1813,7 +2399,13 @@ export default function App() {
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.title}>Create Your First Car</Text>
+          <Pressable style={styles.backButton} onPress={openCarPicker}>
+            <Text style={styles.backButtonText}>Back to Cars</Text>
+          </Pressable>
+
+          <Text style={styles.title}>
+            {availableCars.length > 0 ? "Add New Car" : "Create Your First Car"}
+          </Text>
           <Text style={styles.subtitle}>
             Local save works first. When Google Drive is connected, every save
             syncs to car-tracker-sync.json automatically.
@@ -1984,7 +2576,7 @@ export default function App() {
               hasCautionWarning && styles.titleOnCaution,
             ]}
           >
-            Expense Reports
+            Reports
           </Text>
           <Text
             style={[
@@ -1993,8 +2585,7 @@ export default function App() {
               hasCautionWarning && styles.subtitleOnCaution,
             ]}
           >
-            Review fuel, highway pass, car wash, insurance, inspection, and
-            other expense totals.
+            Review expense totals, distance covered, and fuel fill details.
           </Text>
 
           {globalWarningMessage ? (
@@ -2085,6 +2676,70 @@ export default function App() {
               </View>
 
               <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Other Expenses By Item</Text>
+                <ReportBarChart
+                  rows={reportSummary.otherExpenseRows}
+                  currency={existingCar.currency}
+                  emptyLabel="No other expenses in this period."
+                />
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Distance and Fuel Cost</Text>
+                <View style={styles.reportSummaryRow}>
+                  <Text style={styles.reportSummaryLabel}>
+                    Distance covered
+                  </Text>
+                  <Text style={styles.reportSummaryValue}>
+                    {formatDistanceValue(
+                      reportSummary.totalDistance,
+                      existingCar.distanceUnit,
+                    )}
+                  </Text>
+                </View>
+                <View style={styles.reportSummaryRow}>
+                  <Text style={styles.reportSummaryLabel}>Fuel cost</Text>
+                  <Text style={styles.reportSummaryValue}>
+                    {formatMoney(reportSummary.fuelTotal, existingCar.currency)}
+                  </Text>
+                </View>
+                <View style={styles.reportSummaryRow}>
+                  <Text style={styles.reportSummaryLabel}>Volume filled</Text>
+                  <Text style={styles.reportSummaryValue}>
+                    {formatFuelVolumeValue(
+                      reportSummary.fuelVolumeFilled,
+                      existingCar.fuelVolumeUnit,
+                    )}
+                  </Text>
+                </View>
+                <View style={styles.reportSummaryRow}>
+                  <Text style={styles.reportSummaryLabel}>
+                    Cost per{" "}
+                    {formatFuelVolumeUnitShortLabel(existingCar.fuelVolumeUnit)}
+                  </Text>
+                  <Text style={styles.reportSummaryValue}>
+                    {formatMoneyPerFuelUnit(
+                      reportSummary.fuelCostPerUnit,
+                      existingCar.currency,
+                      existingCar.fuelVolumeUnit,
+                    )}
+                  </Text>
+                </View>
+                <View style={styles.reportSummaryRow}>
+                  <Text style={styles.reportSummaryLabel}>
+                    Cost per {formatDistanceUnitLabel(existingCar.distanceUnit)}
+                  </Text>
+                  <Text style={styles.reportSummaryValue}>
+                    {formatMoneyPerDistance(
+                      reportSummary.fuelCostPerDistance,
+                      existingCar.currency,
+                      existingCar.distanceUnit,
+                    )}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Expenses By Section</Text>
                 <ReportBarChart
                   rows={reportSummary.sectionRows}
@@ -2101,8 +2756,26 @@ export default function App() {
                   emptyLabel="No dated expenses in this period."
                 />
               </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>
+                  Distance By {reportPeriod === "yearly" ? "Month" : "Date"}
+                </Text>
+                <ReportDistanceBarChart
+                  rows={reportSummary.distanceRows}
+                  distanceUnit={existingCar.distanceUnit}
+                  emptyLabel="No distance recorded in this period."
+                />
+              </View>
             </>
           ) : null}
+
+          <Pressable
+            style={[styles.backButton, styles.bottomBackButton]}
+            onPress={handleReportBack}
+          >
+            <Text style={styles.backButtonText}>Back</Text>
+          </Pressable>
 
           <StatusBar style="auto" />
         </ScrollView>
@@ -2133,6 +2806,10 @@ export default function App() {
         ]}
         keyboardShouldPersistTaps="handled"
       >
+        <Pressable style={styles.backButton} onPress={openCarPicker}>
+          <Text style={styles.backButtonText}>Cars</Text>
+        </Pressable>
+
         <Text
           style={[
             styles.title,
@@ -2173,7 +2850,7 @@ export default function App() {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Reporting</Text>
           <Pressable style={styles.primaryButton} onPress={openReportFlow}>
-            <Text style={styles.primaryButtonText}>Open Expense Report</Text>
+            <Text style={styles.primaryButtonText}>Open Report</Text>
           </Pressable>
         </View>
 
@@ -2543,7 +3220,11 @@ export default function App() {
                     {existingCar.currency}
                   </Text>
                   <Text style={styles.cardLine}>
-                    Last fee location: {latestHighwayPassTravelFee.location}
+                    Last fee location:{" "}
+                    {getSavedLocationName(
+                      latestHighwayPassTravelFee.locationId,
+                      latestHighwayPassTravelFee.location,
+                    )}
                   </Text>
                 </>
               ) : null}
@@ -2751,9 +3432,16 @@ export default function App() {
               <Text style={styles.cardLine}>
                 Last price: {latestCarWash.price} {existingCar.currency}
               </Text>
-              {latestCarWash.location ? (
+              {getSavedLocationName(
+                latestCarWash.locationId,
+                latestCarWash.location,
+              ) ? (
                 <Text style={styles.cardLine}>
-                  Location: {latestCarWash.location}
+                  Location:{" "}
+                  {getSavedLocationName(
+                    latestCarWash.locationId,
+                    latestCarWash.location,
+                  )}
                 </Text>
               ) : null}
               <Text style={styles.cardLine}>
@@ -2834,9 +3522,37 @@ export default function App() {
               style={styles.input}
               placeholder="Example: Parking"
               value={otherExpenseItem}
-              onChangeText={setOtherExpenseItem}
+              onChangeText={(value) => {
+                setOtherExpenseItem(value);
+                setIsOtherExpenseItemFocused(true);
+              }}
+              onFocus={() => setIsOtherExpenseItemFocused(true)}
+              onBlur={() => setIsOtherExpenseItemFocused(false)}
               editable={!isSaving && !isDriveSyncing}
+              autoCapitalize="words"
+              returnKeyType="done"
             />
+            {isOtherExpenseItemFocused &&
+            filteredOtherExpenseItemOptions.length > 0 ? (
+              <ScrollView
+                style={styles.itemSuggestionList}
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled
+              >
+                {filteredOtherExpenseItemOptions.map((item) => (
+                  <Pressable
+                    key={item}
+                    style={styles.itemSuggestionButton}
+                    onPressIn={() => {
+                      setOtherExpenseItem(item);
+                      setIsOtherExpenseItemFocused(false);
+                    }}
+                  >
+                    <Text style={styles.itemSuggestionText}>{item}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
           </View>
 
           <View style={styles.formGroup}>
@@ -2958,9 +3674,16 @@ export default function App() {
               <Text style={styles.cardLine}>
                 Last entry type: {formatEntryType(latestEntry.type)}
               </Text>
-              {latestEntry.location ? (
+              {getSavedLocationName(
+                latestEntry.locationId,
+                latestEntry.location,
+              ) ? (
                 <Text style={styles.cardLine}>
-                  Location: {latestEntry.location}
+                  Location:{" "}
+                  {getSavedLocationName(
+                    latestEntry.locationId,
+                    latestEntry.location,
+                  )}
                 </Text>
               ) : null}
             </>
@@ -3263,9 +3986,10 @@ export default function App() {
                   <Text style={styles.historyLine}>
                     Tank state: {formatTankState(entry.tankState, existingCar)}
                   </Text>
-                  {entry.location ? (
+                  {getSavedLocationName(entry.locationId, entry.location) ? (
                     <Text style={styles.historyLine}>
-                      Location: {entry.location}
+                      Location:{" "}
+                      {getSavedLocationName(entry.locationId, entry.location)}
                     </Text>
                   ) : null}
 
@@ -3319,18 +4043,37 @@ export default function App() {
           )}
         </View>
 
-        <Pressable
-          style={[
-            styles.dangerButton,
-            (isSaving || isDriveSyncing) && styles.buttonDisabled,
-          ]}
-          onPress={handleDeleteAllLocalData}
-          disabled={isSaving || isDriveSyncing}
-        >
-          <Text style={styles.dangerButtonText}>
-            {isSaving || isDriveSyncing ? "Working..." : "Delete Local Data"}
-          </Text>
-        </Pressable>
+        <View style={styles.carDangerActions}>
+          <Pressable
+            style={[
+              styles.dangerButton,
+              styles.carDangerButton,
+              styles.flexButton,
+              (isSaving || isDriveSyncing) && styles.buttonDisabled,
+            ]}
+            onPress={handleResetSelectedCarData}
+            disabled={isSaving || isDriveSyncing}
+          >
+            <Text style={styles.dangerButtonText}>
+              {isSaving || isDriveSyncing ? "Working..." : "Reset Car Data"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.dangerButton,
+              styles.carDangerButton,
+              styles.flexButton,
+              (isSaving || isDriveSyncing) && styles.buttonDisabled,
+            ]}
+            onPress={handleDeleteSelectedCar}
+            disabled={isSaving || isDriveSyncing}
+          >
+            <Text style={styles.dangerButtonText}>
+              {isSaving || isDriveSyncing ? "Working..." : "Erase Car"}
+            </Text>
+          </Pressable>
+        </View>
 
         <StatusBar style={hasDangerWarning ? "light" : "auto"} />
       </ScrollView>
@@ -3378,6 +4121,191 @@ function ReportBarChart({
       })}
     </View>
   );
+}
+
+function ReportDistanceBarChart({
+  rows,
+  distanceUnit,
+  emptyLabel,
+}: {
+  rows: ReportDistanceRow[];
+  distanceUnit: DistanceUnit;
+  emptyLabel: string;
+}) {
+  const maxDistance = Math.max(...rows.map((row) => row.distance), 0);
+  const totalDistance = sumReportDistanceRows(rows);
+
+  if (rows.length === 0 || maxDistance <= 0) {
+    return <Text style={styles.cardLine}>{emptyLabel}</Text>;
+  }
+
+  return (
+    <View style={styles.reportChart}>
+      {rows.map((row) => {
+        const width =
+          row.distance > 0
+            ? (`${Math.max((row.distance / maxDistance) * 100, 4)}%` as const)
+            : "0%";
+
+        return (
+          <View key={row.key} style={styles.reportChartRow}>
+            <View style={styles.reportChartHeader}>
+              <Text style={styles.reportChartLabel}>{row.label}</Text>
+              <Text style={styles.reportChartValue}>
+                {formatDistanceWithPercent(
+                  row.distance,
+                  distanceUnit,
+                  totalDistance,
+                )}
+              </Text>
+            </View>
+            <View style={styles.reportBarTrack}>
+              <View style={[styles.reportBarFill, { width }]} />
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function buildOtherExpenseItemOptions(otherExpenses: OtherExpense[]) {
+  const itemByKey = new Map<string, string>();
+
+  for (const expense of otherExpenses) {
+    const label = normalizeOtherExpenseItemLabel(expense.item);
+    if (label === "Uncategorized") continue;
+
+    const key = label.toLocaleLowerCase();
+    if (!itemByKey.has(key)) {
+      itemByKey.set(key, label);
+    }
+  }
+
+  return Array.from(itemByKey.values()).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" }),
+  );
+}
+
+function filterOtherExpenseItemOptions(options: string[], value: string) {
+  const searchText = value.trim().toLocaleLowerCase();
+  if (!searchText) return options;
+
+  return options.filter((option) =>
+    option.toLocaleLowerCase().includes(searchText),
+  );
+}
+
+function resolveGpsLocationForSave(
+  gpsLocation: LocationDraft,
+  typedName: string,
+  locations: LocationPlace[],
+  carId: string,
+): ResolvedLocation {
+  const carLocations = locations.filter((location) => location.carId === carId);
+  const matchingLocation =
+    (gpsLocation.locationId
+      ? carLocations.find((location) => location.id === gpsLocation.locationId)
+      : null) ?? findMatchingLocation(gpsLocation, carLocations);
+  const locationName =
+    typedName || matchingLocation?.name || gpsLocation.inferredName;
+  const now = new Date().toISOString();
+
+  if (matchingLocation) {
+    const nextInferredName =
+      matchingLocation.inferredName || gpsLocation.inferredName;
+    const shouldUpdate =
+      matchingLocation.name !== locationName ||
+      matchingLocation.inferredName !== nextInferredName;
+
+    return {
+      name: locationName,
+      locationId: matchingLocation.id,
+      locations: shouldUpdate
+        ? locations.map((location) =>
+            location.id === matchingLocation.id
+              ? {
+                  ...location,
+                  name: locationName,
+                  inferredName: nextInferredName,
+                  updatedAt: now,
+                }
+              : location,
+          )
+        : locations,
+    };
+  }
+
+  const newLocation: LocationPlace = {
+    id: createId("location"),
+    carId,
+    name: locationName,
+    inferredName: gpsLocation.inferredName,
+    latitude: gpsLocation.latitude,
+    longitude: gpsLocation.longitude,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  return {
+    name: locationName,
+    locationId: newLocation.id,
+    locations: [newLocation, ...locations],
+  };
+}
+
+function findMatchingLocation(
+  gpsLocation: GpsLocation,
+  locations: LocationPlace[],
+) {
+  let closestLocation: LocationPlace | null = null;
+  let closestDistance = Number.POSITIVE_INFINITY;
+
+  for (const location of locations) {
+    const distance = getDistanceMeters(
+      gpsLocation.latitude,
+      gpsLocation.longitude,
+      location.latitude,
+      location.longitude,
+    );
+
+    if (
+      distance <= LOCATION_NAME_TOLERANCE_METERS &&
+      distance < closestDistance
+    ) {
+      closestLocation = location;
+      closestDistance = distance;
+    }
+  }
+
+  return closestLocation;
+}
+
+function getDistanceMeters(
+  latitudeA: number,
+  longitudeA: number,
+  latitudeB: number,
+  longitudeB: number,
+) {
+  const earthRadiusMeters = 6371000;
+  const deltaLatitude = degreesToRadians(latitudeB - latitudeA);
+  const deltaLongitude = degreesToRadians(longitudeB - longitudeA);
+  const haversine =
+    Math.sin(deltaLatitude / 2) * Math.sin(deltaLatitude / 2) +
+    Math.cos(degreesToRadians(latitudeA)) *
+      Math.cos(degreesToRadians(latitudeB)) *
+      Math.sin(deltaLongitude / 2) *
+      Math.sin(deltaLongitude / 2);
+
+  return (
+    earthRadiusMeters *
+    2 *
+    Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
+  );
+}
+
+function degreesToRadians(degrees: number) {
+  return (degrees * Math.PI) / 180;
 }
 
 function buildExpenseEvents({
@@ -3448,8 +4376,40 @@ function buildExpenseEvents({
     pushExpenseEvent(events, {
       id: `other_${expense.id}`,
       section: "other",
+      item: expense.item,
       amount: expense.cost,
       createdAt: expense.createdAt,
+    });
+  }
+
+  return events.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function buildDistanceEvents(entries: Entry[]) {
+  const events: DistanceEvent[] = [];
+
+  for (const entry of entries) {
+    pushDistanceEvent(events, {
+      id: `distance_${entry.id}`,
+      distance: entry.distanceSinceLastEntry,
+      createdAt: entry.createdAt,
+    });
+  }
+
+  return events.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function buildFuelEvents(entries: Entry[]) {
+  const events: FuelEvent[] = [];
+
+  for (const entry of entries) {
+    if (entry.type !== "refuel") continue;
+
+    pushFuelEvent(events, {
+      id: `fuel_volume_${entry.id}`,
+      volumeFilled: entry.amountAdded,
+      moneyPaid: entry.moneyPaid,
+      createdAt: entry.createdAt,
     });
   }
 
@@ -3461,6 +4421,7 @@ function pushExpenseEvent(
   event: {
     id: string;
     section: ExpenseSection;
+    item?: string | null;
     amount: number;
     createdAt: string;
   },
@@ -3473,6 +4434,7 @@ function pushExpenseEvent(
   events.push({
     id: event.id,
     section: event.section,
+    item: event.item ?? null,
     amount: roundTo2(event.amount),
     createdAt: event.createdAt,
     monthKey: getMonthKey(date),
@@ -3481,12 +4443,88 @@ function pushExpenseEvent(
   });
 }
 
-function getReportDateOptions(events: ExpenseEvent[], period: ReportPeriod) {
+function pushFuelEvent(
+  events: FuelEvent[],
+  event: {
+    id: string;
+    volumeFilled: number | null;
+    moneyPaid: number | null;
+    createdAt: string;
+  },
+) {
+  const hasVolume =
+    event.volumeFilled !== null &&
+    Number.isFinite(event.volumeFilled) &&
+    event.volumeFilled > 0;
+  const hasMoney =
+    event.moneyPaid !== null &&
+    Number.isFinite(event.moneyPaid) &&
+    event.moneyPaid >= 0;
+
+  if (!hasVolume && !hasMoney) return;
+
+  const date = new Date(event.createdAt);
+  if (Number.isNaN(date.getTime())) return;
+
+  events.push({
+    id: event.id,
+    volumeFilled: hasVolume ? roundTo2(event.volumeFilled ?? 0) : 0,
+    moneyPaid: hasMoney ? roundTo2(event.moneyPaid ?? 0) : null,
+    createdAt: event.createdAt,
+    monthKey: getMonthKey(date),
+    yearKey: getYearKey(date),
+    dayKey: getDayKey(date),
+  });
+}
+
+function pushDistanceEvent(
+  events: DistanceEvent[],
+  event: {
+    id: string;
+    distance: number | null;
+    createdAt: string;
+  },
+) {
+  if (
+    event.distance === null ||
+    !Number.isFinite(event.distance) ||
+    event.distance <= 0
+  ) {
+    return;
+  }
+
+  const date = new Date(event.createdAt);
+  if (Number.isNaN(date.getTime())) return;
+
+  events.push({
+    id: event.id,
+    distance: roundTo2(event.distance),
+    createdAt: event.createdAt,
+    monthKey: getMonthKey(date),
+    yearKey: getYearKey(date),
+    dayKey: getDayKey(date),
+  });
+}
+
+function getReportDateOptions(
+  expenseEvents: ExpenseEvent[],
+  distanceEvents: DistanceEvent[],
+  fuelEvents: FuelEvent[],
+  period: ReportPeriod,
+) {
   const keys = new Set<string>();
   const now = new Date();
   keys.add(period === "monthly" ? getMonthKey(now) : getYearKey(now));
 
-  for (const event of events) {
+  for (const event of expenseEvents) {
+    keys.add(period === "monthly" ? event.monthKey : event.yearKey);
+  }
+
+  for (const event of distanceEvents) {
+    keys.add(period === "monthly" ? event.monthKey : event.yearKey);
+  }
+
+  for (const event of fuelEvents) {
     keys.add(period === "monthly" ? event.monthKey : event.yearKey);
   }
 
@@ -3496,32 +4534,93 @@ function getReportDateOptions(events: ExpenseEvent[], period: ReportPeriod) {
       key,
       label: formatReportPeriodTitle(period, key),
       amount: sumExpenses(
-        events.filter((event) => isEventInReportPeriod(event, period, key)),
+        expenseEvents.filter((event) =>
+          isEventInReportPeriod(event, period, key),
+        ),
       ),
     }));
 }
 
 function buildReportSummary(
-  events: ExpenseEvent[],
+  expenseEvents: ExpenseEvent[],
+  distanceEvents: DistanceEvent[],
+  fuelEvents: FuelEvent[],
   period: ReportPeriod,
   periodKey: string,
 ) {
-  const periodEvents = events.filter((event) =>
+  const periodExpenseEvents = expenseEvents.filter((event) =>
+    isEventInReportPeriod(event, period, periodKey),
+  );
+  const periodDistanceEvents = distanceEvents.filter((event) =>
+    isEventInReportPeriod(event, period, periodKey),
+  );
+  const periodFuelEvents = fuelEvents.filter((event) =>
     isEventInReportPeriod(event, period, periodKey),
   );
   const sectionRows = EXPENSE_SECTION_ORDER.map((section) => ({
     key: section,
     label: EXPENSE_SECTION_LABELS[section],
     amount: sumExpenses(
-      periodEvents.filter((event) => event.section === section),
+      periodExpenseEvents.filter((event) => event.section === section),
     ),
   }));
+  const fuelTotal = sumExpenses(
+    periodExpenseEvents.filter((event) => event.section === "fuel"),
+  );
+  const totalDistance = sumDistance(periodDistanceEvents);
+  const fuelVolumeFilled = sumFuelVolume(periodFuelEvents);
+  const pricedFuelVolume = sumPricedFuelVolume(periodFuelEvents);
+  const pricedFuelTotal = sumPricedFuelCost(periodFuelEvents);
 
   return {
-    total: sumExpenses(periodEvents),
+    total: sumExpenses(periodExpenseEvents),
     sectionRows,
-    dateRows: buildReportDateRows(periodEvents, period, periodKey),
+    otherExpenseRows: buildOtherExpenseRows(periodExpenseEvents),
+    dateRows: buildReportDateRows(periodExpenseEvents, period, periodKey),
+    totalDistance,
+    fuelTotal,
+    fuelVolumeFilled,
+    fuelCostPerUnit:
+      pricedFuelVolume > 0 ? roundTo4(pricedFuelTotal / pricedFuelVolume) : null,
+    fuelCostPerDistance:
+      totalDistance > 0 ? roundTo4(fuelTotal / totalDistance) : null,
+    distanceRows: buildReportDistanceRows(
+      periodDistanceEvents,
+      period,
+      periodKey,
+    ),
   };
+}
+
+function buildOtherExpenseRows(events: ExpenseEvent[]) {
+  const rowsByItem = new Map<
+    string,
+    {
+      label: string;
+      amount: number;
+    }
+  >();
+
+  for (const event of events) {
+    if (event.section !== "other") continue;
+
+    const label = normalizeOtherExpenseItemLabel(event.item);
+    const key = label.toLocaleLowerCase();
+    const currentRow = rowsByItem.get(key);
+
+    rowsByItem.set(key, {
+      label: currentRow?.label ?? label,
+      amount: roundTo2((currentRow?.amount ?? 0) + event.amount),
+    });
+  }
+
+  return Array.from(rowsByItem.entries())
+    .map(([key, row]) => ({
+      key,
+      label: row.label,
+      amount: row.amount,
+    }))
+    .sort((a, b) => b.amount - a.amount || a.label.localeCompare(b.label));
 }
 
 function buildReportDateRows(
@@ -3554,8 +4653,38 @@ function buildReportDateRows(
   }));
 }
 
+function buildReportDistanceRows(
+  events: DistanceEvent[],
+  period: ReportPeriod,
+  periodKey: string,
+) {
+  if (period === "yearly") {
+    return SHORT_MONTH_NAMES.map((label, index) => {
+      const monthKey = `${periodKey}-${String(index + 1).padStart(2, "0")}`;
+
+      return {
+        key: monthKey,
+        label,
+        distance: sumDistance(
+          events.filter((event) => event.monthKey === monthKey),
+        ),
+      };
+    });
+  }
+
+  const dayKeys = Array.from(new Set(events.map((event) => event.dayKey))).sort(
+    (a, b) => a.localeCompare(b),
+  );
+
+  return dayKeys.map((dayKey) => ({
+    key: dayKey,
+    label: formatDayKey(dayKey),
+    distance: sumDistance(events.filter((event) => event.dayKey === dayKey)),
+  }));
+}
+
 function isEventInReportPeriod(
-  event: ExpenseEvent,
+  event: ExpenseEvent | DistanceEvent | FuelEvent,
   period: ReportPeriod,
   periodKey: string,
 ) {
@@ -3568,17 +4697,94 @@ function sumExpenses(events: ExpenseEvent[]) {
   return roundTo2(events.reduce((sum, event) => sum + event.amount, 0));
 }
 
+function sumDistance(events: DistanceEvent[]) {
+  return roundTo2(events.reduce((sum, event) => sum + event.distance, 0));
+}
+
+function sumFuelVolume(events: FuelEvent[]) {
+  return roundTo2(events.reduce((sum, event) => sum + event.volumeFilled, 0));
+}
+
+function sumPricedFuelVolume(events: FuelEvent[]) {
+  return roundTo2(
+    events.reduce((sum, event) => {
+      if (event.moneyPaid === null || event.volumeFilled <= 0) return sum;
+      return sum + event.volumeFilled;
+    }, 0),
+  );
+}
+
+function sumPricedFuelCost(events: FuelEvent[]) {
+  return roundTo2(
+    events.reduce((sum, event) => {
+      if (event.moneyPaid === null || event.volumeFilled <= 0) return sum;
+      return sum + event.moneyPaid;
+    }, 0),
+  );
+}
+
 function sumReportRows(rows: ReportAmountRow[]) {
   return roundTo2(rows.reduce((sum, row) => sum + row.amount, 0));
+}
+
+function sumReportDistanceRows(rows: ReportDistanceRow[]) {
+  return roundTo2(rows.reduce((sum, row) => sum + row.distance, 0));
 }
 
 function formatMoney(amount: number, currency: string) {
   return `${roundTo2(amount)} ${currency}`.trim();
 }
 
+function formatMoneyPerDistance(
+  amount: number | null,
+  currency: string,
+  distanceUnit: DistanceUnit,
+) {
+  if (amount === null) return "Not available";
+  return `${`${roundTo4(amount)} ${currency}`.trim()}/${formatDistanceUnitLabel(
+    distanceUnit,
+  )}`;
+}
+
+function formatMoneyPerFuelUnit(
+  amount: number | null,
+  currency: string,
+  fuelVolumeUnit: FuelVolumeUnit,
+) {
+  if (amount === null) return "Not available";
+  return `${`${roundTo4(amount)} ${currency}`.trim()}/${formatFuelVolumeUnitShortLabel(
+    fuelVolumeUnit,
+  )}`;
+}
+
+function formatFuelVolumeValue(
+  amount: number,
+  fuelVolumeUnit: FuelVolumeUnit,
+) {
+  return `${roundTo2(amount)} ${formatFuelVolumeUnitShortLabel(
+    fuelVolumeUnit,
+  )}`;
+}
+
+function normalizeOtherExpenseItemLabel(item: string | null) {
+  const label = item?.trim().replace(/\s+/g, " ");
+  return label || "Uncategorized";
+}
+
 function formatMoneyWithPercent(amount: number, currency: string, total: number) {
   return `${formatMoney(amount, currency)} (${formatPercentOfTotal(
     amount,
+    total,
+  )})`;
+}
+
+function formatDistanceWithPercent(
+  distance: number,
+  distanceUnit: DistanceUnit,
+  total: number,
+) {
+  return `${formatDistanceValue(distance, distanceUnit)} (${formatPercentOfTotal(
+    distance,
     total,
   )})`;
 }
@@ -3602,10 +4808,22 @@ function formatReportPeriodTitle(period: ReportPeriod, key: string | null) {
 }
 
 function formatDayKey(dayKey: string) {
-  const [, month, day] = dayKey.split("-");
+  const [year, month, day] = dayKey.split("-");
+  const yearNumber = Number(year);
   const monthIndex = Number(month) - 1;
+  const dayNumber = Number(day);
   const monthLabel = SHORT_MONTH_NAMES[monthIndex] ?? month;
-  return `${monthLabel} ${Number(day)}`;
+  const date = new Date(yearNumber, monthIndex, dayNumber);
+  const weekdayLabel =
+    date.getFullYear() === yearNumber &&
+    date.getMonth() === monthIndex &&
+    date.getDate() === dayNumber
+      ? WEEKDAY_NAMES[date.getDay()]
+      : null;
+
+  return weekdayLabel
+    ? `${monthLabel} ${dayNumber}, ${weekdayLabel}`
+    : `${monthLabel} ${dayNumber}`;
 }
 
 function normalizeDateInput(value: string) {

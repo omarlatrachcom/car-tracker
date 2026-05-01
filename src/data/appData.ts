@@ -7,6 +7,7 @@ import type {
   HighwayPass,
   HighwayPassRefill,
   HighwayPassTravelFee,
+  LocationPlace,
   OtherExpense,
   SyncState,
   VehicleInspectionRecord,
@@ -20,6 +21,8 @@ export function createEmptySyncState(): SyncState {
     lastSyncError: null,
     lastSyncSource: null,
     datasetResetAt: null,
+    carDataResetAtByCarId: {},
+    carDeletedAtByCarId: {},
   };
 }
 
@@ -33,6 +36,7 @@ export function createEmptyAppData(): AppData {
     carInsuranceRecords: [],
     vehicleInspectionRecords: [],
     otherExpenses: [],
+    locations: [],
     highwayPasses: [],
     highwayPassRefills: [],
     highwayPassTravelFees: [],
@@ -104,6 +108,10 @@ export function normalizeAppData(data: Partial<AppData>): AppData {
             typeof entry.location === "string" && entry.location.trim()
               ? entry.location.trim()
               : null,
+          locationId:
+            typeof entry.locationId === "string" && entry.locationId.trim()
+              ? entry.locationId.trim()
+              : null,
           createdAt:
             typeof entry.createdAt === "string"
               ? entry.createdAt
@@ -131,6 +139,11 @@ export function normalizeAppData(data: Partial<AppData>): AppData {
           location:
             typeof carWash.location === "string" && carWash.location.trim()
               ? carWash.location.trim()
+              : null,
+          locationId:
+            typeof carWash.locationId === "string" &&
+            carWash.locationId.trim()
+              ? carWash.locationId.trim()
               : null,
           createdAt:
             typeof carWash.createdAt === "string"
@@ -229,6 +242,57 @@ export function normalizeAppData(data: Partial<AppData>): AppData {
             : fallbackNow,
       }))
     : [];
+
+  const locations: LocationPlace[] = [];
+  if (Array.isArray(data.locations)) {
+    for (const location of data.locations as Array<Partial<LocationPlace>>) {
+      const latitude =
+        typeof location.latitude === "number" &&
+        Number.isFinite(location.latitude) &&
+        location.latitude >= -90 &&
+        location.latitude <= 90
+          ? location.latitude
+          : null;
+      const longitude =
+        typeof location.longitude === "number" &&
+        Number.isFinite(location.longitude) &&
+        location.longitude >= -180 &&
+        location.longitude <= 180
+          ? location.longitude
+          : null;
+
+      if (latitude === null || longitude === null) continue;
+
+      const inferredName =
+        typeof location.inferredName === "string"
+          ? location.inferredName.trim()
+          : "";
+      const name =
+        typeof location.name === "string" && location.name.trim()
+          ? location.name.trim()
+          : inferredName || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+
+      locations.push({
+        id:
+          typeof location.id === "string" && location.id.trim()
+            ? location.id.trim()
+            : createId("location"),
+        carId: typeof location.carId === "string" ? location.carId : "",
+        name,
+        inferredName,
+        latitude,
+        longitude,
+        createdAt:
+          typeof location.createdAt === "string"
+            ? location.createdAt
+            : fallbackNow,
+        updatedAt:
+          typeof location.updatedAt === "string"
+            ? location.updatedAt
+            : fallbackNow,
+      });
+    }
+  }
 
   const highwayPasses: HighwayPass[] = Array.isArray(data.highwayPasses)
     ? (data.highwayPasses as Array<Partial<HighwayPass>>).map((pass) => ({
@@ -361,6 +425,10 @@ export function normalizeAppData(data: Partial<AppData>): AppData {
             typeof fee.location === "string" && fee.location.trim()
               ? fee.location.trim()
               : "",
+          locationId:
+            typeof fee.locationId === "string" && fee.locationId.trim()
+              ? fee.locationId.trim()
+              : null,
           createdAt,
           updatedAt,
         };
@@ -376,6 +444,7 @@ export function normalizeAppData(data: Partial<AppData>): AppData {
     carInsuranceRecords,
     vehicleInspectionRecords,
     otherExpenses,
+    locations,
     highwayPasses,
     highwayPassRefills,
     highwayPassTravelFees,
@@ -392,6 +461,8 @@ export function normalizeAppData(data: Partial<AppData>): AppData {
           : null,
       datasetResetAt:
         typeof sync.datasetResetAt === "string" ? sync.datasetResetAt : null,
+      carDataResetAtByCarId: normalizeIsoRecord(sync.carDataResetAtByCarId),
+      carDeletedAtByCarId: normalizeIsoRecord(sync.carDeletedAtByCarId),
     },
   };
 }
@@ -401,72 +472,114 @@ export function mergeAppData(localData: AppData, remoteData: AppData) {
     localData.sync.datasetResetAt,
     remoteData.sync.datasetResetAt,
   );
+  const carDataResetAtByCarId = mergeIsoRecords(
+    localData.sync.carDataResetAtByCarId,
+    remoteData.sync.carDataResetAtByCarId,
+  );
+  const carDeletedAtByCarId = mergeIsoRecords(
+    localData.sync.carDeletedAtByCarId,
+    remoteData.sync.carDeletedAtByCarId,
+  );
 
-  const filteredLocalCars = filterRecordsByReset(localData.cars, latestReset);
-  const filteredRemoteCars = filterRecordsByReset(remoteData.cars, latestReset);
-  const filteredLocalEntries = filterRecordsByReset(
-    localData.entries,
-    latestReset,
+  const filteredLocalCars = filterCarsByDelete(
+    filterRecordsByReset(localData.cars, latestReset),
+    carDeletedAtByCarId,
   );
-  const filteredRemoteEntries = filterRecordsByReset(
-    remoteData.entries,
-    latestReset,
+  const filteredRemoteCars = filterCarsByDelete(
+    filterRecordsByReset(remoteData.cars, latestReset),
+    carDeletedAtByCarId,
   );
-  const filteredLocalCarWashes = filterRecordsByReset(
-    localData.carWashes,
-    latestReset,
+  const filteredLocalEntries = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(localData.entries, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredRemoteCarWashes = filterRecordsByReset(
-    remoteData.carWashes,
-    latestReset,
+  const filteredRemoteEntries = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(remoteData.entries, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredLocalCarInsuranceRecords = filterRecordsByReset(
-    localData.carInsuranceRecords,
-    latestReset,
+  const filteredLocalCarWashes = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(localData.carWashes, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredRemoteCarInsuranceRecords = filterRecordsByReset(
-    remoteData.carInsuranceRecords,
-    latestReset,
+  const filteredRemoteCarWashes = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(remoteData.carWashes, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredLocalVehicleInspectionRecords = filterRecordsByReset(
-    localData.vehicleInspectionRecords,
-    latestReset,
+  const filteredLocalCarInsuranceRecords = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(localData.carInsuranceRecords, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredRemoteVehicleInspectionRecords = filterRecordsByReset(
-    remoteData.vehicleInspectionRecords,
-    latestReset,
+  const filteredRemoteCarInsuranceRecords = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(remoteData.carInsuranceRecords, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredLocalOtherExpenses = filterRecordsByReset(
-    localData.otherExpenses,
-    latestReset,
+  const filteredLocalVehicleInspectionRecords =
+    filterCarRecordsByDeleteAndReset(
+      filterRecordsByReset(localData.vehicleInspectionRecords, latestReset),
+      carDeletedAtByCarId,
+      carDataResetAtByCarId,
+    );
+  const filteredRemoteVehicleInspectionRecords =
+    filterCarRecordsByDeleteAndReset(
+      filterRecordsByReset(remoteData.vehicleInspectionRecords, latestReset),
+      carDeletedAtByCarId,
+      carDataResetAtByCarId,
+    );
+  const filteredLocalOtherExpenses = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(localData.otherExpenses, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredRemoteOtherExpenses = filterRecordsByReset(
-    remoteData.otherExpenses,
-    latestReset,
+  const filteredRemoteOtherExpenses = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(remoteData.otherExpenses, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredLocalHighwayPasses = filterRecordsByReset(
-    localData.highwayPasses,
-    latestReset,
+  const filteredLocalLocations = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(localData.locations, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredRemoteHighwayPasses = filterRecordsByReset(
-    remoteData.highwayPasses,
-    latestReset,
+  const filteredRemoteLocations = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(remoteData.locations, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredLocalHighwayPassRefills = filterRecordsByReset(
-    localData.highwayPassRefills,
-    latestReset,
+  const filteredLocalHighwayPasses = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(localData.highwayPasses, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredRemoteHighwayPassRefills = filterRecordsByReset(
-    remoteData.highwayPassRefills,
-    latestReset,
+  const filteredRemoteHighwayPasses = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(remoteData.highwayPasses, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredLocalHighwayPassTravelFees = filterRecordsByReset(
-    localData.highwayPassTravelFees,
-    latestReset,
+  const filteredLocalHighwayPassRefills = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(localData.highwayPassRefills, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
-  const filteredRemoteHighwayPassTravelFees = filterRecordsByReset(
-    remoteData.highwayPassTravelFees,
-    latestReset,
+  const filteredRemoteHighwayPassRefills = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(remoteData.highwayPassRefills, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
+  );
+  const filteredLocalHighwayPassTravelFees = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(localData.highwayPassTravelFees, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
+  );
+  const filteredRemoteHighwayPassTravelFees = filterCarRecordsByDeleteAndReset(
+    filterRecordsByReset(remoteData.highwayPassTravelFees, latestReset),
+    carDeletedAtByCarId,
+    carDataResetAtByCarId,
   );
 
   return normalizeAppData({
@@ -492,6 +605,10 @@ export function mergeAppData(localData: AppData, remoteData: AppData) {
       filteredLocalOtherExpenses,
       filteredRemoteOtherExpenses,
     ),
+    locations: mergeEntityArrays(
+      filteredLocalLocations,
+      filteredRemoteLocations,
+    ),
     highwayPasses: mergeEntityArrays(
       filteredLocalHighwayPasses,
       filteredRemoteHighwayPasses,
@@ -516,6 +633,8 @@ export function mergeAppData(localData: AppData, remoteData: AppData) {
       lastSyncError: null,
       lastSyncSource: "drive",
       datasetResetAt: latestReset,
+      carDataResetAtByCarId,
+      carDeletedAtByCarId,
     },
   });
 }
@@ -542,12 +661,48 @@ function hashString(value: string) {
   return Math.abs(hash).toString(36);
 }
 
+function normalizeIsoRecord(value: unknown) {
+  const normalized: Record<string, string> = {};
+  if (!isRecord(value)) return normalized;
+
+  for (const [key, recordValue] of Object.entries(value)) {
+    if (!key || typeof recordValue !== "string") continue;
+    normalized[key] = recordValue;
+  }
+
+  return normalized;
+}
+
 function filterRecordsByReset<T extends { updatedAt: string }>(
   items: T[],
   resetAt: string | null,
 ) {
   if (!resetAt) return items;
   return items.filter((item) => item.updatedAt.localeCompare(resetAt) >= 0);
+}
+
+function filterCarsByDelete<T extends { id: string }>(
+  cars: T[],
+  carDeletedAtByCarId: Record<string, string>,
+) {
+  return cars.filter((car) => !(car.id in carDeletedAtByCarId));
+}
+
+function filterCarRecordsByDeleteAndReset<
+  T extends { carId: string; updatedAt: string },
+>(
+  records: T[],
+  carDeletedAtByCarId: Record<string, string>,
+  carDataResetAtByCarId: Record<string, string>,
+) {
+  return records.filter((record) => {
+    if (record.carId in carDeletedAtByCarId) return false;
+
+    const resetAt = carDataResetAtByCarId[record.carId];
+    if (!resetAt) return true;
+
+    return record.updatedAt.localeCompare(resetAt) >= 0;
+  });
 }
 
 function mergeEntityArrays<T extends { id: string; updatedAt: string }>(
@@ -565,6 +720,29 @@ function mergeEntityArrays<T extends { id: string; updatedAt: string }>(
   }
 
   return Array.from(byId.values());
+}
+
+function mergeIsoRecords(
+  localRecord: Record<string, string>,
+  remoteRecord: Record<string, string>,
+) {
+  const merged: Record<string, string> = {};
+  const keys = new Set([
+    ...Object.keys(localRecord),
+    ...Object.keys(remoteRecord),
+  ]);
+
+  for (const key of keys) {
+    const latest = getLatestIso(
+      localRecord[key] ?? null,
+      remoteRecord[key] ?? null,
+    );
+    if (latest) {
+      merged[key] = latest;
+    }
+  }
+
+  return merged;
 }
 
 function getLatestIso(a: string | null, b: string | null) {

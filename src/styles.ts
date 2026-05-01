@@ -68,6 +68,10 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
+  bottomBackButton: {
+    marginBottom: 0,
+    marginTop: 2,
+  },
   backButtonText: {
     color: "#111",
     fontSize: 15,
@@ -145,6 +149,25 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
+  },
+  itemSuggestionList: {
+    backgroundColor: "#fff",
+    borderColor: "#d0d0d0",
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 6,
+    maxHeight: 180,
+  },
+  itemSuggestionButton: {
+    borderBottomColor: "#ececec",
+    borderBottomWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  itemSuggestionText: {
+    color: "#111",
+    fontSize: 16,
+    fontWeight: "600",
   },
   locationRow: {
     flexDirection: "row",
@@ -426,6 +449,19 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
     marginBottom: 20,
+  },
+  bottomDangerButton: {
+    marginTop: "auto",
+  },
+  carDangerActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 20,
+    marginTop: "auto",
+  },
+  carDangerButton: {
+    marginBottom: 0,
+    marginTop: 0,
   },
   dangerButtonText: {
     color: "#fff",

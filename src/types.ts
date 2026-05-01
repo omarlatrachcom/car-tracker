@@ -35,6 +35,7 @@ export type Entry = {
   pricePerUnit: number | null;
   moneyPaid: number | null;
   location: string | null;
+  locationId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -44,6 +45,7 @@ export type CarWash = {
   carId: string;
   price: number;
   location: string | null;
+  locationId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -75,6 +77,17 @@ export type OtherExpense = {
   updatedAt: string;
 };
 
+export type LocationPlace = {
+  id: string;
+  carId: string;
+  name: string;
+  inferredName: string;
+  latitude: number;
+  longitude: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type HighwayPass = {
   id: string;
   carId: string;
@@ -98,6 +111,7 @@ export type HighwayPassTravelFee = {
   highwayPassId: string;
   amount: number;
   location: string;
+  locationId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -108,6 +122,8 @@ export type SyncState = {
   lastSyncError: string | null;
   lastSyncSource: "local" | "drive" | null;
   datasetResetAt: string | null;
+  carDataResetAtByCarId: Record<string, string>;
+  carDeletedAtByCarId: Record<string, string>;
 };
 
 export type AppData = {
@@ -119,6 +135,7 @@ export type AppData = {
   carInsuranceRecords: CarInsuranceRecord[];
   vehicleInspectionRecords: VehicleInspectionRecord[];
   otherExpenses: OtherExpense[];
+  locations: LocationPlace[];
   highwayPasses: HighwayPass[];
   highwayPassRefills: HighwayPassRefill[];
   highwayPassTravelFees: HighwayPassTravelFee[];
