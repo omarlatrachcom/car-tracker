@@ -94,7 +94,7 @@ import { getErrorMessage, isRecord } from "./src/utils/object";
 
 type HighwayPassForm = "none" | "add_pass" | "refill" | "travel_fee";
 type ReportStep = "home" | "period" | "date" | "summary";
-type ReportPeriod = "monthly" | "yearly";
+type ReportPeriod = "monthly" | "yearly" | "last_n_months";
 type ExpenseSection =
   | "fuel"
   | "highway_pass"
@@ -159,6 +159,7 @@ type FuelEvent = {
   id: string;
   volumeFilled: number;
   moneyPaid: number | null;
+  pricePerUnit: number | null;
   createdAt: string;
   monthKey: string;
   yearKey: string;
@@ -175,6 +176,17 @@ type ReportDistanceRow = {
   key: string;
   label: string;
   distance: number;
+};
+
+type ReportFuelPriceRow = {
+  key: string;
+  label: string;
+  pricePerUnit: number | null;
+};
+
+type ReportMonthRange = {
+  firstMonthKey: string;
+  lastMonthKey: string;
 };
 
 const EXPENSE_SECTION_LABELS: Record<ExpenseSection, string> = {
@@ -2620,6 +2632,11 @@ export default function App() {
                   selected={false}
                   onPress={() => handleReportPeriodSelect("yearly")}
                 />
+                <OptionButton
+                  label="Last N Months"
+                  selected={false}
+                  onPress={() => handleReportPeriodSelect("last_n_months")}
+                />
               </View>
             </View>
           ) : null}
@@ -2627,7 +2644,7 @@ export default function App() {
           {reportStep === "date" && reportPeriod ? (
             <View style={styles.card}>
               <Text style={styles.sectionTitle}>
-                {reportPeriod === "monthly" ? "Select Month" : "Select Year"}
+                {formatReportDateSelectionTitle(reportPeriod)}
               </Text>
 
               <View style={styles.stackedOptions}>
@@ -2653,10 +2670,7 @@ export default function App() {
             <>
               <View style={styles.reportTotalCard}>
                 <Text style={styles.reportTotalLabel}>
-                  {formatReportPeriodTitle(
-                    reportPeriod,
-                    selectedReportPeriodKey,
-                  )}
+                  {reportSummary.title}
                 </Text>
                 <Text style={styles.reportTotalValue}>
                   {formatMoney(reportSummary.total, existingCar.currency)}
@@ -2740,6 +2754,16 @@ export default function App() {
               </View>
 
               <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Fuel Price Over Time</Text>
+                <ReportFuelPriceBarChart
+                  rows={reportSummary.fuelPriceRows}
+                  currency={existingCar.currency}
+                  fuelVolumeUnit={existingCar.fuelVolumeUnit}
+                  emptyLabel="No fuel prices in this period."
+                />
+              </View>
+
+              <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Expenses By Section</Text>
                 <ReportBarChart
                   rows={reportSummary.sectionRows}
@@ -2759,7 +2783,7 @@ export default function App() {
 
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>
-                  Distance By {reportPeriod === "yearly" ? "Month" : "Date"}
+                  Distance By {reportPeriod === "monthly" ? "Date" : "Month"}
                 </Text>
                 <ReportDistanceBarChart
                   rows={reportSummary.distanceRows}
@@ -4169,6 +4193,59 @@ function ReportDistanceBarChart({
   );
 }
 
+function ReportFuelPriceBarChart({
+  rows,
+  currency,
+  fuelVolumeUnit,
+  emptyLabel,
+}: {
+  rows: ReportFuelPriceRow[];
+  currency: string;
+  fuelVolumeUnit: FuelVolumeUnit;
+  emptyLabel: string;
+}) {
+  const pricedRows = rows.filter(
+    (row) => row.pricePerUnit !== null && row.pricePerUnit > 0,
+  );
+  const maxPrice = Math.max(
+    ...pricedRows.map((row) => row.pricePerUnit ?? 0),
+    0,
+  );
+
+  if (pricedRows.length === 0 || maxPrice <= 0) {
+    return <Text style={styles.cardLine}>{emptyLabel}</Text>;
+  }
+
+  return (
+    <View style={styles.reportChart}>
+      {rows.map((row) => {
+        const width =
+          row.pricePerUnit !== null && row.pricePerUnit > 0
+            ? (`${Math.max((row.pricePerUnit / maxPrice) * 100, 4)}%` as const)
+            : "0%";
+
+        return (
+          <View key={row.key} style={styles.reportChartRow}>
+            <View style={styles.reportChartHeader}>
+              <Text style={styles.reportChartLabel}>{row.label}</Text>
+              <Text style={styles.reportChartValue}>
+                {formatMoneyPerFuelUnit(
+                  row.pricePerUnit,
+                  currency,
+                  fuelVolumeUnit,
+                )}
+              </Text>
+            </View>
+            <View style={styles.reportBarTrack}>
+              <View style={[styles.reportBarFill, { width }]} />
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function buildOtherExpenseItemOptions(otherExpenses: OtherExpense[]) {
   const itemByKey = new Map<string, string>();
 
@@ -4409,6 +4486,7 @@ function buildFuelEvents(entries: Entry[]) {
       id: `fuel_volume_${entry.id}`,
       volumeFilled: entry.amountAdded,
       moneyPaid: entry.moneyPaid,
+      pricePerUnit: entry.pricePerUnit,
       createdAt: entry.createdAt,
     });
   }
@@ -4449,6 +4527,7 @@ function pushFuelEvent(
     id: string;
     volumeFilled: number | null;
     moneyPaid: number | null;
+    pricePerUnit: number | null;
     createdAt: string;
   },
 ) {
@@ -4460,8 +4539,12 @@ function pushFuelEvent(
     event.moneyPaid !== null &&
     Number.isFinite(event.moneyPaid) &&
     event.moneyPaid >= 0;
+  const hasPrice =
+    event.pricePerUnit !== null &&
+    Number.isFinite(event.pricePerUnit) &&
+    event.pricePerUnit > 0;
 
-  if (!hasVolume && !hasMoney) return;
+  if (!hasVolume && !hasMoney && !hasPrice) return;
 
   const date = new Date(event.createdAt);
   if (Number.isNaN(date.getTime())) return;
@@ -4470,6 +4553,7 @@ function pushFuelEvent(
     id: event.id,
     volumeFilled: hasVolume ? roundTo2(event.volumeFilled ?? 0) : 0,
     moneyPaid: hasMoney ? roundTo2(event.moneyPaid ?? 0) : null,
+    pricePerUnit: hasPrice ? roundTo4(event.pricePerUnit ?? 0) : null,
     createdAt: event.createdAt,
     monthKey: getMonthKey(date),
     yearKey: getYearKey(date),
@@ -4512,6 +4596,34 @@ function getReportDateOptions(
   fuelEvents: FuelEvent[],
   period: ReportPeriod,
 ) {
+  const monthRange = getReportMonthRange(
+    expenseEvents,
+    distanceEvents,
+    fuelEvents,
+  );
+
+  if (period === "last_n_months") {
+    const maxMonths = getInclusiveMonthSpan(
+      monthRange.firstMonthKey,
+      monthRange.lastMonthKey,
+    );
+
+    return Array.from({ length: maxMonths }, (_, index) => {
+      const monthCount = index + 1;
+      const key = String(monthCount);
+
+      return {
+        key,
+        label: formatReportPeriodTitle(period, key, monthRange),
+        amount: sumExpenses(
+          expenseEvents.filter((event) =>
+            isEventInReportPeriod(event, period, key, monthRange),
+          ),
+        ),
+      };
+    });
+  }
+
   const keys = new Set<string>();
   const now = new Date();
   keys.add(period === "monthly" ? getMonthKey(now) : getYearKey(now));
@@ -4532,10 +4644,10 @@ function getReportDateOptions(
     .sort((a, b) => b.localeCompare(a))
     .map((key) => ({
       key,
-      label: formatReportPeriodTitle(period, key),
+      label: formatReportPeriodTitle(period, key, monthRange),
       amount: sumExpenses(
         expenseEvents.filter((event) =>
-          isEventInReportPeriod(event, period, key),
+          isEventInReportPeriod(event, period, key, monthRange),
         ),
       ),
     }));
@@ -4548,14 +4660,19 @@ function buildReportSummary(
   period: ReportPeriod,
   periodKey: string,
 ) {
+  const monthRange = getReportMonthRange(
+    expenseEvents,
+    distanceEvents,
+    fuelEvents,
+  );
   const periodExpenseEvents = expenseEvents.filter((event) =>
-    isEventInReportPeriod(event, period, periodKey),
+    isEventInReportPeriod(event, period, periodKey, monthRange),
   );
   const periodDistanceEvents = distanceEvents.filter((event) =>
-    isEventInReportPeriod(event, period, periodKey),
+    isEventInReportPeriod(event, period, periodKey, monthRange),
   );
   const periodFuelEvents = fuelEvents.filter((event) =>
-    isEventInReportPeriod(event, period, periodKey),
+    isEventInReportPeriod(event, period, periodKey, monthRange),
   );
   const sectionRows = EXPENSE_SECTION_ORDER.map((section) => ({
     key: section,
@@ -4573,10 +4690,16 @@ function buildReportSummary(
   const pricedFuelTotal = sumPricedFuelCost(periodFuelEvents);
 
   return {
+    title: formatReportPeriodTitle(period, periodKey, monthRange),
     total: sumExpenses(periodExpenseEvents),
     sectionRows,
     otherExpenseRows: buildOtherExpenseRows(periodExpenseEvents),
-    dateRows: buildReportDateRows(periodExpenseEvents, period, periodKey),
+    dateRows: buildReportDateRows(
+      periodExpenseEvents,
+      period,
+      periodKey,
+      monthRange,
+    ),
     totalDistance,
     fuelTotal,
     fuelVolumeFilled,
@@ -4584,10 +4707,17 @@ function buildReportSummary(
       pricedFuelVolume > 0 ? roundTo4(pricedFuelTotal / pricedFuelVolume) : null,
     fuelCostPerDistance:
       totalDistance > 0 ? roundTo4(fuelTotal / totalDistance) : null,
+    fuelPriceRows: buildReportFuelPriceRows(
+      periodFuelEvents,
+      period,
+      periodKey,
+      monthRange,
+    ),
     distanceRows: buildReportDistanceRows(
       periodDistanceEvents,
       period,
       periodKey,
+      monthRange,
     ),
   };
 }
@@ -4627,16 +4757,16 @@ function buildReportDateRows(
   events: ExpenseEvent[],
   period: ReportPeriod,
   periodKey: string,
+  monthRange: ReportMonthRange,
 ) {
-  if (period === "yearly") {
-    return SHORT_MONTH_NAMES.map((label, index) => {
-      const monthKey = `${periodKey}-${String(index + 1).padStart(2, "0")}`;
-
+  const monthRows = getReportChartMonthRows(period, periodKey, monthRange);
+  if (monthRows) {
+    return monthRows.map(({ key, label }) => {
       return {
-        key: monthKey,
+        key,
         label,
         amount: sumExpenses(
-          events.filter((event) => event.monthKey === monthKey),
+          events.filter((event) => event.monthKey === key),
         ),
       };
     });
@@ -4657,16 +4787,16 @@ function buildReportDistanceRows(
   events: DistanceEvent[],
   period: ReportPeriod,
   periodKey: string,
+  monthRange: ReportMonthRange,
 ) {
-  if (period === "yearly") {
-    return SHORT_MONTH_NAMES.map((label, index) => {
-      const monthKey = `${periodKey}-${String(index + 1).padStart(2, "0")}`;
-
+  const monthRows = getReportChartMonthRows(period, periodKey, monthRange);
+  if (monthRows) {
+    return monthRows.map(({ key, label }) => {
       return {
-        key: monthKey,
+        key,
         label,
         distance: sumDistance(
-          events.filter((event) => event.monthKey === monthKey),
+          events.filter((event) => event.monthKey === key),
         ),
       };
     });
@@ -4683,14 +4813,59 @@ function buildReportDistanceRows(
   }));
 }
 
+function buildReportFuelPriceRows(
+  events: FuelEvent[],
+  period: ReportPeriod,
+  periodKey: string,
+  monthRange: ReportMonthRange,
+) {
+  const monthRows = getReportChartMonthRows(period, periodKey, monthRange);
+  if (monthRows) {
+    return monthRows.map(({ key, label }) => {
+      return {
+        key,
+        label,
+        pricePerUnit: getAverageFuelPricePerUnit(
+          events.filter((event) => event.monthKey === key),
+        ),
+      };
+    });
+  }
+
+  const dayKeys = Array.from(new Set(events.map((event) => event.dayKey))).sort(
+    (a, b) => a.localeCompare(b),
+  );
+
+  return dayKeys.map((dayKey) => ({
+    key: dayKey,
+    label: formatDayKey(dayKey),
+    pricePerUnit: getAverageFuelPricePerUnit(
+      events.filter((event) => event.dayKey === dayKey),
+    ),
+  }));
+}
+
 function isEventInReportPeriod(
   event: ExpenseEvent | DistanceEvent | FuelEvent,
   period: ReportPeriod,
   periodKey: string,
+  monthRange: ReportMonthRange,
 ) {
-  return period === "monthly"
-    ? event.monthKey === periodKey
-    : event.yearKey === periodKey;
+  if (period === "monthly") return event.monthKey === periodKey;
+  if (period === "yearly") return event.yearKey === periodKey;
+
+  const monthCount = parseReportMonthCount(periodKey);
+  if (monthCount === null) return false;
+
+  const startMonthKey = addMonthsToMonthKey(
+    monthRange.lastMonthKey,
+    -(monthCount - 1),
+  );
+
+  return (
+    event.monthKey.localeCompare(startMonthKey) >= 0 &&
+    event.monthKey.localeCompare(monthRange.lastMonthKey) <= 0
+  );
 }
 
 function sumExpenses(events: ExpenseEvent[]) {
@@ -4721,6 +4896,48 @@ function sumPricedFuelCost(events: FuelEvent[]) {
       return sum + event.moneyPaid;
     }, 0),
   );
+}
+
+function getAverageFuelPricePerUnit(events: FuelEvent[]) {
+  let totalWeightedPrice = 0;
+  let totalVolume = 0;
+  let totalPrice = 0;
+  let priceCount = 0;
+
+  for (const event of events) {
+    const pricePerUnit = getFuelPricePerUnit(event);
+    if (pricePerUnit === null) continue;
+
+    totalPrice += pricePerUnit;
+    priceCount += 1;
+
+    if (event.volumeFilled > 0) {
+      totalWeightedPrice += pricePerUnit * event.volumeFilled;
+      totalVolume += event.volumeFilled;
+    }
+  }
+
+  if (totalVolume > 0) {
+    return roundTo4(totalWeightedPrice / totalVolume);
+  }
+
+  if (priceCount > 0) {
+    return roundTo4(totalPrice / priceCount);
+  }
+
+  return null;
+}
+
+function getFuelPricePerUnit(event: FuelEvent) {
+  if (event.pricePerUnit !== null && event.pricePerUnit > 0) {
+    return event.pricePerUnit;
+  }
+
+  if (event.moneyPaid !== null && event.volumeFilled > 0) {
+    return roundTo4(event.moneyPaid / event.volumeFilled);
+  }
+
+  return null;
 }
 
 function sumReportRows(rows: ReportAmountRow[]) {
@@ -4794,16 +5011,176 @@ function formatPercentOfTotal(amount: number, total: number) {
   return `${roundTo2((amount / total) * 100)}%`;
 }
 
-function formatReportPeriodTitle(period: ReportPeriod, key: string | null) {
+function getReportMonthRange(
+  expenseEvents: ExpenseEvent[],
+  distanceEvents: DistanceEvent[],
+  fuelEvents: FuelEvent[],
+): ReportMonthRange {
+  const monthKeys = new Set<string>();
+
+  for (const event of expenseEvents) {
+    monthKeys.add(event.monthKey);
+  }
+
+  for (const event of distanceEvents) {
+    monthKeys.add(event.monthKey);
+  }
+
+  for (const event of fuelEvents) {
+    monthKeys.add(event.monthKey);
+  }
+
+  if (monthKeys.size === 0) {
+    const currentMonthKey = getMonthKey(new Date());
+    return {
+      firstMonthKey: currentMonthKey,
+      lastMonthKey: currentMonthKey,
+    };
+  }
+
+  const sortedMonthKeys = Array.from(monthKeys).sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  return {
+    firstMonthKey: sortedMonthKeys[0],
+    lastMonthKey: sortedMonthKeys[sortedMonthKeys.length - 1],
+  };
+}
+
+function getReportChartMonthRows(
+  period: ReportPeriod,
+  periodKey: string,
+  monthRange: ReportMonthRange,
+) {
+  if (period === "yearly") {
+    return SHORT_MONTH_NAMES.map((label, index) => ({
+      key: `${periodKey}-${String(index + 1).padStart(2, "0")}`,
+      label,
+    }));
+  }
+
+  if (period !== "last_n_months") return null;
+
+  const monthCount = parseReportMonthCount(periodKey);
+  if (monthCount === null) return [];
+
+  const startMonthKey = addMonthsToMonthKey(
+    monthRange.lastMonthKey,
+    -(monthCount - 1),
+  );
+
+  return getMonthKeysInRange(startMonthKey, monthRange.lastMonthKey).map(
+    (monthKey) => ({
+      key: monthKey,
+      label: formatShortMonthKey(monthKey),
+    }),
+  );
+}
+
+function getMonthKeysInRange(startMonthKey: string, endMonthKey: string) {
+  const monthCount = getInclusiveMonthSpan(startMonthKey, endMonthKey);
+
+  return Array.from({ length: monthCount }, (_, index) =>
+    addMonthsToMonthKey(startMonthKey, index),
+  );
+}
+
+function getInclusiveMonthSpan(startMonthKey: string, endMonthKey: string) {
+  const startMonth = parseMonthKey(startMonthKey);
+  const endMonth = parseMonthKey(endMonthKey);
+
+  if (!startMonth || !endMonth) return 1;
+
+  const span =
+    (endMonth.year - startMonth.year) * 12 +
+    (endMonth.monthIndex - startMonth.monthIndex) +
+    1;
+
+  return Math.max(span, 1);
+}
+
+function addMonthsToMonthKey(monthKey: string, monthOffset: number) {
+  const parsed = parseMonthKey(monthKey);
+  if (!parsed) return monthKey;
+
+  return getMonthKey(new Date(parsed.year, parsed.monthIndex + monthOffset, 1));
+}
+
+function parseMonthKey(monthKey: string) {
+  const match = monthKey.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) return null;
+  if (month < 1 || month > 12) return null;
+
+  return {
+    year,
+    monthIndex: month - 1,
+  };
+}
+
+function parseReportMonthCount(value: string | null) {
+  if (!value) return null;
+
+  const monthCount = Number(value);
+  if (!Number.isInteger(monthCount) || monthCount < 1) return null;
+
+  return monthCount;
+}
+
+function formatReportDateSelectionTitle(period: ReportPeriod) {
+  if (period === "monthly") return "Select Month";
+  if (period === "yearly") return "Select Year";
+  return "Select Number of Months";
+}
+
+function formatReportPeriodTitle(
+  period: ReportPeriod,
+  key: string | null,
+  monthRange: ReportMonthRange,
+) {
   if (!key) return "Selected period";
 
   if (period === "yearly") {
     return key;
   }
 
-  const [year, month] = key.split("-");
+  if (period === "last_n_months") {
+    const monthCount = parseReportMonthCount(key);
+    if (monthCount === null) return "Selected months";
+
+    const startMonthKey = addMonthsToMonthKey(
+      monthRange.lastMonthKey,
+      -(monthCount - 1),
+    );
+    const monthLabel = monthCount === 1 ? "Month" : "Months";
+
+    if (monthCount === 1) {
+      return `Last 1 Month (${formatMonthKey(monthRange.lastMonthKey)})`;
+    }
+
+    return `Last ${monthCount} ${monthLabel} (${formatMonthKey(
+      startMonthKey,
+    )} - ${formatMonthKey(monthRange.lastMonthKey)})`;
+  }
+
+  return formatMonthKey(key);
+}
+
+function formatMonthKey(monthKey: string) {
+  const [year, month] = monthKey.split("-");
   const monthIndex = Number(month) - 1;
   const monthLabel = MONTH_NAMES[monthIndex] ?? month;
+  return `${monthLabel} ${year}`;
+}
+
+function formatShortMonthKey(monthKey: string) {
+  const [year, month] = monthKey.split("-");
+  const monthIndex = Number(month) - 1;
+  const monthLabel = SHORT_MONTH_NAMES[monthIndex] ?? month;
   return `${monthLabel} ${year}`;
 }
 
